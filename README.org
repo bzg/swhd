@@ -5,7 +5,9 @@ A local daemon exposing the [[https://archive.softwareheritage.org][Software Her
 files as a small JSON API on =127.0.0.1=, for clients such as [[https://github.com/bzg/swh.el][swh.el]]
 
 It computes SWHIDs locally, checks them against the archive and caches
-answers in =$XDG_CACHE_HOME/swhd/known.edn= (a SWHID is immutable).
+answers in =$XDG_CACHE_HOME/swhd/known.edn= (a SWHID is immutable). What
+the archive's provenance API finds is kept in
+=$XDG_CACHE_HOME/swhd/provenance.edn=: that call is the costliest.
 
 Inside a Git repository, the SWHIDs are those of the tracked tree:
 untracked and ignored files are left out.
@@ -60,19 +62,27 @@ The service starts at your first login.
 
 * API
 
-| Route                | Description                                   |
-|----------------------+-----------------------------------------------|
-| =GET /ping=            | liveness check                                |
-| =GET /tree?path=DIR=   | every artifact: swhid, dir?, archived         |
-| =GET /file?path=FILE=  | one artifact: swhid, archived                 |
-| =GET /swhid?path=FILE= | the artifact as a qualified SWHID (see below) |
-| =GET /origin?path=DIR= | archival status and date of the repo's origin |
-| =GET /visits?path=DIR= | the origin's last visits (=n=, 10 by default)   |
-| =POST /save?path=DIR=  | "save code now" on the repo's origin          |
+| Route                       | Description                                   |
+|-----------------------------+-----------------------------------------------|
+| =GET /ping=                   | liveness check                                |
+| =GET /tree?path=DIR=          | every artifact: swhid, dir?, archived         |
+| =GET /file?path=FILE=         | one artifact: swhid, archived                 |
+| =GET /swhid?path=FILE=        | the artifact as a qualified SWHID (see below) |
+| =GET /origin?path=DIR=        | archival status and date of the repo's origin |
+| =GET /visits?path=DIR=        | the origin's last visits (=n=, 10 by default)   |
+| =POST /save?path=DIR=         | "save code now" on the repo's origin          |
+| =GET /provenance?swhid=SWHID= | where the archive found it (see below)        |
 
 =/file= takes a file or a directory. In a Git repository, a tracked file
 counts as archived when one of its parent directories is, which spares
 requests to the archive.
+
+=/provenance= returns the core =swhid= and, under =provenance=, the
+qualified SWHID the archive's provenance API gives, whose =origin= and
+=anchor= name an origin and the release or revision holding the
+artifact there; =null= when it knows none.  This API needs a token with
+a special permission.  A provenance found is kept for good; that there
+is none, for ten minutes.
 
 =/origin= and =/save= return under =origin= the URL they used for the
 repository: the remote's URL in the archive's form, with =.git= when

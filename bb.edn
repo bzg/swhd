@@ -1,6 +1,6 @@
 {:paths ["src" "test"]
  :deps {io.github.bzg/swhid {:mvn/version "0.1.0"}
-        io.github.bzg/swh-api {:mvn/version "0.1.0"}}
+        io.github.bzg/swh-api {:mvn/version "0.1.1"}}
  :tasks
  {daemon
   {:doc "Run the daemon (SWHD_PORT, SWH_API_TOKEN)"

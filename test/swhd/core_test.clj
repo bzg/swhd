@@ -278,6 +278,60 @@
         (is (= 5 @visits)))
       (finally (delete-recursively work)))))
 
+(deftest provenance-test
+  (let [work (temp-dir "swhd-test")
+        file (str (io/file work "provenance.edn"))
+        cnt "swh:1:cnt:94a9ed024d3859793618152ea559a168bbcbb5e2"
+        other "swh:1:cnt:0000000000000000000000000000000000000000"
+        found (str cnt ";origin=https://example.org/lib;anchor=swh:1:rel:"
+                   (apply str (repeat 40 "1")))
+        calls (atom 0)
+        status (atom 200)
+        request (fn [{:keys [uri]}]
+                  (swap! calls inc)
+                  {:status @status :headers {}
+                   :body (if (str/includes? uri (str "/provenance/whereis/" cnt "/"))
+                           (json/generate-string found)
+                           "null")})
+        make (fn [& [ttl]]
+               (daemon/make-handler
+                (cond-> {:cache (cache/init (str (io/file work "known.edn")))
+                         :provenance (cache/init-provenance file)
+                         :api-opts {:request request}}
+                  ttl (assoc :origin-ttl-ms ttl))))
+        ask (fn [handler s]
+              (let [resp (handler {:request-method :get :uri "/provenance"
+                                   :query-string (str "swhid="
+                                                      (java.net.URLEncoder/encode s "UTF-8"))})]
+                [(:status resp) (json/parse-string (:body resp) true)]))]
+    (try
+      (testing "found: answered, then from the cache, kept across restarts"
+        (let [handler (make)]
+          (is (= [200 {:swhid cnt :provenance found}] (ask handler cnt)))
+          (is (= [200 {:swhid cnt :provenance found}] (ask handler (str cnt ";lines=1")))
+              "qualifiers are dropped")
+          (is (= 1 @calls)))
+        (is (= [200 {:swhid cnt :provenance found}] (ask (make) cnt)))
+        (is (= 1 @calls)))
+      (testing "none: remembered for a while only"
+        (let [handler (make)]
+          (is (= [200 {:swhid other :provenance nil}] (ask handler other)))
+          (ask handler other)
+          (is (= 2 @calls)))
+        (let [handler (make 0)]
+          (ask handler other)
+          (ask handler other)
+          (is (= 4 @calls))))
+      (testing "the archive's refusal is an upstream error"
+        (reset! status 403)
+        (let [[code body] (ask (make) other)]
+          (is (= 502 code))
+          (is (= 403 (:upstream-status body)))))
+      (testing "a missing or invalid SWHID is a 400"
+        (is (= 400 (first (get-json (make) :get "/provenance"))))
+        (is (= 400 (first (ask (make) "swh:1:cnt:zz")))))
+      (finally (delete-recursively work)))))
+
 (def ^:private snapshot "0000000000000000000000000000000000000042")
 
 (deftest qualify-test

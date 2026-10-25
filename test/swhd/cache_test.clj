@@ -30,6 +30,38 @@
       (finally
         (delete-recursively dir)))))
 
+(deftest provenance-cache-test
+  (let [dir (temp-dir "swhd-cache-test")
+        file (str (io/file dir "provenance.edn"))
+        q "swh:1:cnt:aa;origin=https://example.org/lib;anchor=swh:1:rel:bb"]
+    (try
+      (let [c (cache/init-provenance file)]
+        (is (nil? (cache/provenance c "swh:1:cnt:aa")))
+        (cache/add-provenance! c "swh:1:cnt:aa" q)
+        (is (= q (cache/provenance c "swh:1:cnt:aa"))))
+      (is (= q (cache/provenance (cache/init-provenance file) "swh:1:cnt:aa"))
+          "persisted")
+      (testing "the same answer again does not rewrite the file"
+        (let [before (.lastModified (io/file file))]
+          (cache/add-provenance! (cache/init-provenance file) "swh:1:cnt:aa" q)
+          (is (= before (.lastModified (io/file file))))))
+      (testing "a corrupt file is set aside"
+        (spit file "#{\"not a map\"}")
+        (is (nil? (cache/provenance (cache/init-provenance file) "swh:1:cnt:aa")))
+        (is (.exists (io/file (str file ".broken")))))
+      (testing "without a file, in memory only"
+        (let [c (cache/init-provenance nil)]
+          (cache/add-provenance! c "swh:1:cnt:aa" q)
+          (is (= q (cache/provenance c "swh:1:cnt:aa")))))
+      (finally
+        (delete-recursively dir)))))
+
+(deftest parse-provenance-test
+  (is (= {"swh:1:cnt:aa" "swh:1:cnt:aa;origin=x"}
+         (cache/parse-provenance "{\"swh:1:cnt:aa\" \"swh:1:cnt:aa;origin=x\"}")))
+  (is (nil? (cache/parse-provenance "{\"swh:1:cnt:aa\" 1}")) "not strings")
+  (is (nil? (cache/parse-provenance "#{}")) "not a map"))
+
 (deftest parse-known-test
   (is (= #{"swh:1:cnt:aa"} (cache/parse-known "#{\"swh:1:cnt:aa\"}")))
   (is (nil? (cache/parse-known "")) "an empty file")

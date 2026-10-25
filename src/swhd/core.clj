@@ -19,6 +19,11 @@
   GET  /visits?path=DIR[&n=10]
                          the last n archival visits of the origin
   POST /save?path=DIR    save code now on the repo's origin remote
+  GET  /provenance?swhid=SWHID
+                         where the archive found the artifact: the
+                         qualified SWHID (origin, anchor) of its
+                         provenance API, null when none; needs a token
+                         with the provenance permission
 
   Environment: SWHD_PORT (default 8642), SWH_API_TOKEN (a client's own
   Authorization: Bearer header takes precedence)."
@@ -147,6 +152,31 @@
     (cache/add! cache newly-known)
     result))
 
+(defn- core-swhid!
+  "The core SWHID string of `s`, a 400 when it is not a SWHID."
+  [s]
+  (when-not s (fail 400 "Missing swhid parameter"))
+  (try (swhid/swhid->string (swhid/core-swhid (swhid/parse s)))
+       (catch clojure.lang.ExceptionInfo _
+         (fail 400 "Invalid SWHID" {:swhid s}))))
+
+(defn- provenance!
+  "Where the archive found the core SWHID string `s`, as
+  swh.api.v1/whereis says: from the provenance cache, which keeps what
+  is found for good, else from the archive. That it knows none is
+  remembered in `misses` for `ttl-ms`: the archive may get it."
+  [{:keys [provenance misses ttl-ms api-opts log]} s]
+  (or (cache/provenance provenance s)
+      (let [now (System/currentTimeMillis)]
+        (when-not (origin/fresh (get @misses s) now ttl-ms)
+          (log (str "provenance: asking the archive about " s))
+          (if-let [found (api/whereis s api-opts)]
+            (do (cache/add-provenance! provenance s found)
+                (swap! misses dissoc s)
+                found)
+            (do (swap! misses assoc s {:value true :at now})
+                nil))))))
+
 (defn- resolve-origin!
   "swhd.origin/lookup for the repository holding `path`; a 400 outside
   a Git repository or without a remote."
@@ -274,6 +304,9 @@
                       :visits (if visit
                                 (api/visits origin (assoc api-opts :per-page n))
                                 [])}))
+      [:get "/provenance"]
+      (let [s (core-swhid! (get params "swhid"))]
+        (respond 200 {:swhid s :provenance (provenance! ctx s)}))
       [:post "/save"]
       ;; save under the URL the archive already knows, if any
       (let [{:keys [origin]} (resolve-origin! ctx (path!))]
@@ -291,12 +324,21 @@
   `log`, when given, receives one line per request (method, route,
   status, duration, error) and per call to the archive. What the
   archive says about an origin is remembered for `origin-ttl-ms`
-  (swhd.origin/default-ttl-ms) and forgotten by a save request."
-  [{:keys [cache api-opts log origin-ttl-ms]}]
+  (swhd.origin/default-ttl-ms) and forgotten by a save request; that
+  it knows no provenance for an artifact, as long. The provenances it
+  finds go to `provenance` (swhd.cache/init-provenance), in memory by
+  default."
+  [{:keys [cache provenance api-opts log origin-ttl-ms]}]
   (let [log (or log (fn [_]))
         visits (atom {})
+        provenance (or provenance (cache/init-provenance nil))
+        misses (atom {})
         ctx-for (fn [api-opts]
                   {:cache cache
+                   :provenance provenance
+                   :misses misses
+                   :ttl-ms (or origin-ttl-ms origin/default-ttl-ms)
+                   :log log
                    :api-opts api-opts
                    :known-fn (known-fn cache api-opts log)
                    :origin-opts (cond-> {:cache visits :log log}
@@ -337,6 +379,8 @@
   (let [port (port-from-env)
         token (System/getenv "SWH_API_TOKEN")
         handler (make-handler {:cache (cache/init (cache/default-file))
+                               :provenance (cache/init-provenance
+                                            (cache/default-provenance-file))
                                :api-opts (when token {:token token})
                                :log log-stderr})]
     (srv/run-server handler {:port port :ip "127.0.0.1"})
