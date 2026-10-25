@@ -1,0 +1,16 @@
+{:paths ["src" "test"]
+ :deps {io.github.bzg/swhid {:mvn/version "0.1.0"}
+        io.github.bzg/swh-api {:mvn/version "0.1.0"}}
+ :tasks
+ {daemon
+  {:doc "Run the daemon (SWHD_PORT, SWH_API_TOKEN)"
+   :task (exec 'swhd.core/-main)}
+  test
+  {:doc "Run the test suite"
+   :requires ([clojure.test :as t])
+   :task (do
+           (require 'swhd.cache-test 'swhd.origin-test 'swhd.scan-test 'swhd.core-test)
+           (let [{:keys [fail error]}
+                 (t/run-tests 'swhd.cache-test 'swhd.origin-test
+                              'swhd.scan-test 'swhd.core-test)]
+             (System/exit (if (pos? (+ fail error)) 1 0))))}}}

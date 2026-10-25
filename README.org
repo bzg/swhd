@@ -1,0 +1,111 @@
+#+title: swhd
+#+options: toc:nil num:nil
+
+A local daemon exposing the [[https://archive.softwareheritage.org][Software Heritage]] archival status of your
+files as a small JSON API on =127.0.0.1=, for clients such as [[https://github.com/bzg/swh.el][swh.el]]
+
+It computes SWHIDs locally, checks them against the archive and caches
+answers in =$XDG_CACHE_HOME/swhd/known.edn= (a SWHID is immutable).
+
+Inside a Git repository, the SWHIDs are those of the tracked tree:
+untracked and ignored files are left out.
+
+The repository's origin is looked up in the archive's form, i.e.
+=git@github.com:bzg/x.git= is looked up as =https://github.com/bzg/x=.
+
+The daemon answers local clients only.
+
+* Run
+
+#+begin_src shell
+bb daemon  # SWHD_PORT (default 8642), SWH_API_TOKEN (higher rate limits)
+#+end_src
+
+A client may bring its own token in an =Authorization: Bearer= header,
+as swh.el does with =swh-api-token=; it then takes precedence over
+=SWH_API_TOKEN=, which remains for clients that have none.
+
+* Run at startup
+
+On GNU/Linux, you can run the daemon as a systemd user service.
+
+Create =~/.config/systemd/user/swhd.service=, with the absolute path to
+=bb= (=command -v bb=) and to this repository's =bb.edn=:
+
+#+begin_src conf
+[Unit]
+Description=swhd, local Software Heritage status daemon
+
+[Service]
+ExecStart=/path/to/bb --config %h/src/swhd/bb.edn daemon
+EnvironmentFile=-%h/.config/swhd/env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+#+end_src
+
+Optionally set =SWHD_PORT= and =SWH_API_TOKEN=, one ~KEY=value~ per line, in
+=~/.config/swhd/env= (=chmod 600=). Then:
+
+#+begin_src shell
+systemctl --user daemon-reload
+systemctl --user enable --now swhd
+curl http://127.0.0.1:8642/ping  # {"pong":true}
+journalctl --user -u swhd -f     # logs
+#+end_src
+
+The service starts at your first login.
+
+* API
+
+| Route                | Description                                   |
+|----------------------+-----------------------------------------------|
+| =GET /ping=            | liveness check                                |
+| =GET /tree?path=DIR=   | every artifact: swhid, dir?, archived         |
+| =GET /file?path=FILE=  | one artifact: swhid, archived                 |
+| =GET /swhid?path=FILE= | the artifact as a qualified SWHID (see below) |
+| =GET /origin?path=DIR= | archival status and date of the repo's origin |
+| =GET /visits?path=DIR= | the origin's last visits (=n=, 10 by default)   |
+| =POST /save?path=DIR=  | "save code now" on the repo's origin          |
+
+=/file= takes a file or a directory. In a Git repository, a tracked file
+counts as archived when one of its parent directories is, which spares
+requests to the archive.
+
+=/origin= and =/save= return under =origin= the URL they used for the
+repository: the remote's URL in the archive's form, with =.git= when
+that is how the archive knows it.
+
+=/swhid= takes a file or a directory and an optional =lines=A-B= (or
+=lines=A=) for a file, and answers with a qualified SWHID verified
+against the archive:
+
+#+begin_src json
+{"swhid": "swh:1:cnt:94a9…;origin=https://github.com/me/repo;visit=swh:1:snp:d7f1…;anchor=swh:1:rev:2db1…;path=/src/x.clj;lines=9-15",
+ "core": "swh:1:cnt:94a9…", "archived": true,
+ "origin": "https://github.com/me/repo", "origin-archived": true,
+ "browse-url": "https://archive.softwareheritage.org/swh:1:cnt:94a9…;origin=…"}
+#+end_src
+
+Inside a Git repository with a public remote, the identifier carries
+the origin, the snapshot of the archive's latest visit, the HEAD
+revision as anchor when the archive knows it (and then the path from
+the repository root). Outside, or without a remote, it is the bare
+=cnt=/=dir= SWHID, with the lines.
+
+The repository's remote is the one its current branch tracks, else
+=origin=, else the only one there is. 
+
+* Tests
+
+#+begin_src shell
+bb test
+#+end_src
+
+* License
+
+Copyright © 2026 Bastien Guerry
+
+The code is distributed under the Eclipse Public License 2.0.
