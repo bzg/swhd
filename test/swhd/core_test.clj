@@ -213,6 +213,15 @@
           (is (= 502 status))
           (is (= 503 (:upstream-status body)))
           (is (= "SWH API error 503" (:error body)))))
+      (testing "the reason given by the archive is part of the error"
+        (let [handler (daemon/make-handler
+                       {:cache (cache/init cache-file)
+                        :api-opts {:request (fn [_] {:status 403 :headers {}
+                                                     :body "{\"exception\":\"AuthenticationFailed\",\"reason\":\"Bearer token expired\"}"})}})
+              [status body] (get-json handler :get "/origin" (str repo))]
+          (is (= 502 status))
+          (is (= 403 (:upstream-status body)))
+          (is (= "SWH API error 403: Bearer token expired" (:error body)))))
       (testing "daemon errors keep their own status"
         (let [handler (handler-for #{} cache-file)]
           (is (= 400 (first (get-json handler :get "/tree"))))

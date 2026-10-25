@@ -77,17 +77,21 @@
   "JSON error for an exception. Daemon errors carry their HTTP status
   under :swhd/status; an error answered by the archive (swh-api puts
   its status under :status) is a 502 with that status as
-  :upstream-status, a rate limit a 429, an unreachable archive (see
-  `unreachable?`) a 503; anything else a 500."
+  :upstream-status and the reason it gives, if any, appended to the
+  error message (\"Bearer token expired...\"); a rate limit a 429, an
+  unreachable archive (see `unreachable?`) a 503; anything else a 500."
   [e]
-  (let [{:keys [rate-limited retry-after status] swhd-status :swhd/status}
+  (let [{:keys [rate-limited retry-after status body] swhd-status :swhd/status}
         (ex-data e)
         ;; ex-message is nil for a bare NPE and the like
         msg (or (ex-message e) (str (class e)))]
     (cond
       rate-limited (respond 429 {:error "SWH API rate limit" :retry-after retry-after})
       swhd-status (respond swhd-status {:error msg})
-      status (respond 502 {:error msg :upstream-status status})
+      status (respond 502 {:error (if-let [reason (when (map? body) (get body "reason"))]
+                                    (str msg ": " reason)
+                                    msg)
+                           :upstream-status status})
       (unreachable? e)
       (respond 503 {:error "Cannot reach the Software Heritage archive"})
       :else (respond 500 {:error msg}))))
