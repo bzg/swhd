@@ -583,4 +583,10 @@
     (is (= "t0k" (daemon/bearer-token {"authorization" "Bearer t0k"})))
     (is (= "t0k" (daemon/bearer-token {"authorization" "bearer  t0k"})))
     (is (nil? (daemon/bearer-token {"authorization" "Basic dXNlcg=="})))
-    (is (nil? (daemon/bearer-token {})))))
+    (is (nil? (daemon/bearer-token {}))))
+  (testing "SWH_API_TOKEN"
+    (is (= "t0k" (daemon/env-token "t0k")))
+    (is (= "t0k" (daemon/env-token " t0k\n")) "trimmed")
+    (is (nil? (daemon/env-token nil)) "unset")
+    (is (nil? (daemon/env-token "")) "empty, as SWH_API_TOKEN= in an env file")
+    (is (nil? (daemon/env-token "  ")) "blank")))

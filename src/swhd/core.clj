@@ -363,6 +363,14 @@
          :headers {"Content-Type" "application/json"}
          :body (json/generate-string body)}))))
 
+(defn env-token
+  "The token in the SWH_API_TOKEN value `raw`, nil when it is unset or
+  blank: an empty token would be sent as a malformed Authorization
+  header, which the archive rejects on every call."
+  [raw]
+  (when-not (str/blank? raw)
+    (str/trim raw)))
+
 (defn- port-from-env
   "SWHD_PORT as a port number, 8642 when unset; exits on a bad value
   rather than listening where the clients do not expect it."
@@ -377,7 +385,7 @@
 
 (defn -main [& _]
   (let [port (port-from-env)
-        token (System/getenv "SWH_API_TOKEN")
+        token (env-token (System/getenv "SWH_API_TOKEN"))
         handler (make-handler {:cache (cache/init (cache/default-file))
                                :provenance (cache/init-provenance
                                             (cache/default-provenance-file))
