@@ -120,32 +120,48 @@
                  [p {:swhid s :dir? (dir? p) :archived (archived? p)}]))
           nodes)))
 
-(defn lookup
-  "Archival status of the single artifact at `path`, pruned like `scan`:
-  inside a Git repository, an archived ancestor directory covers a
-  tracked artifact. An untracked artifact (or one outside a repository)
-  is only asked for itself; an untracked file in a repository is hashed
-  as `git add` would store it (clean filters), like a tracked one.
-  Returns:
+(defn artifact
+  "The artifact at `path`, before the archive is asked about it:
+    {:swhid s :dir? b :repo f-or-nil :tracked? b :dirs [ancestor-swhid]}
+  Inside a Git repository, a tracked artifact gets its SWHID from the
+  tracked working tree, and :dirs the SWHIDs of its ancestor directories;
+  an untracked file is hashed as `git add` would store it (clean
+  filters), like a tracked one. An untracked directory, or an artifact
+  outside a repository, is hashed as it is on disk."
+  [path]
+  (let [f (normalize path)
+        {:keys [repo nodes rel]} (in-repo f)
+        tracked? (contains? nodes rel)]
+    {:swhid (cond tracked? (nodes rel)
+                  (and repo (.isFile f)) (swhid/swhid->string (g/blob-swhid repo rel))
+                  :else (swhid/swhid->string (h/path-swhid f exclude-git)))
+     :dir? (.isDirectory f)
+     :repo repo
+     :tracked? tracked?
+     :dirs (when tracked? (map nodes (ancestor-dirs rel)))}))
+
+(defn status
+  "Archival status of the `artifact` (see `artifact`), pruned like `scan`:
+  an archived ancestor directory covers a tracked artifact. An untracked
+  artifact is only asked for itself. Returns:
     {:swhid s :archived b :newly-known #{swhid-str}}
   The API gets at most one call, for `s` and its ancestors together.
   Once found archived, `s` is :newly-known even when only an ancestor
   said so: the next lookup stops at the cache."
+  [{s :swhid dirs :dirs} known-fn known?]
+  (if (known? s)
+    {:swhid s :archived true :newly-known #{}}
+    (let [covered? (boolean (some known? dirs))
+          found (if covered?
+                  #{}
+                  (set (positives (known-fn (distinct (cons s dirs))))))
+          archived (or covered? (boolean (seq found)))]
+      {:swhid s
+       :archived archived
+       :newly-known (if archived (conj found s) #{})})))
+
+(defn lookup
+  "Archival status of the single artifact at `path`: `status` of its
+  `artifact`."
   [path known-fn known?]
-  (let [f (normalize path)
-        {:keys [repo nodes rel]} (in-repo f)
-        tracked? (contains? nodes rel)
-        s (cond tracked? (nodes rel)
-                (and repo (.isFile f)) (swhid/swhid->string (g/blob-swhid repo rel))
-                :else (swhid/swhid->string (h/path-swhid f exclude-git)))]
-    (if (known? s)
-      {:swhid s :archived true :newly-known #{}}
-      (let [dirs (when tracked? (map nodes (ancestor-dirs rel)))
-            covered? (boolean (some known? dirs))
-            found (if covered?
-                    #{}
-                    (set (positives (known-fn (distinct (cons s dirs))))))
-            archived (or covered? (boolean (seq found)))]
-        {:swhid s
-         :archived archived
-         :newly-known (if archived (conj found s) #{})}))))
+  (status (artifact path) known-fn known?))

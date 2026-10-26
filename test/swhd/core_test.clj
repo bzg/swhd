@@ -568,6 +568,20 @@
           (let [handler (handler-for #{} (fresh-cache))]
             (is (str/starts-with? (:swhid (second (swhid-of handler sub))) "swh:1:dir:"))
             (is (= 400 (first (swhid-of handler sub "1-2"))))))
+        (testing "an untracked directory is a 400, as for swh.el's direct backend, before the archive is asked"
+          (let [new (io/file repo "new")
+                asked (atom false)
+                handler (daemon/make-handler {:cache (cache/init (fresh-cache))
+                                              :api-opts {:request (fn [_] (reset! asked true))}})]
+            (.mkdir new)
+            (spit (io/file new "c.txt") "ccc\n")
+            (is (= [400 {:error (str "Nothing is tracked in " (scan/normalize new))}]
+                   (swhid-of handler new)))
+            (is (false? @asked))
+            (delete-recursively new)))
+        (testing "the root directory is anchored at path /"
+          (let [handler (handler-for #{rev} (fresh-cache) :visit visit)]
+            (is (str/ends-with? (:swhid (second (swhid-of handler repo))) (str ";anchor=" rev ";path=/")))))
         (testing "malformed lines are a 400"
           (doseq [bad ["x-y" "0" "0-3" "5-3" "1-"]]
             (is (= 400 (first (swhid-of (handler-for #{} (fresh-cache)) a bad))) bad)))

@@ -15,7 +15,8 @@
   GET  /swhid?path=FILE[&lines=A[-B]]
                          the artifact as a qualified SWHID (origin,
                          visit, anchor, path, lines), verified against
-                         the archive, with its browse URL
+                         the archive, with its browse URL; a 400 for a
+                         directory where nothing is tracked
   GET  /origin?path=DIR  the repo's origin remote in the archive:
                          archived, date of the last archival
   GET  /visits?path=DIR[&n=10]
@@ -45,7 +46,7 @@
 (def version
   "This daemon's version, which /ping gives: clients such as swh.el use
   it to tell an outdated daemon. Bump it with each release tag."
-  "0.4.0")
+  "0.5.0")
 
 (defn- fail
   "Throw a daemon error answered with HTTP `status`."
@@ -152,12 +153,12 @@
         (throw e)))))
 
 (defn- lookup!
-  "swhd.scan/lookup of `path` against the cache, which also learns what
-  an archived ancestor covers (the API's answers are already in it, see
-  `known-fn`)."
-  [{:keys [cache known-fn]} path]
+  "swhd.scan/status of the `artifact` against the cache, which also
+  learns what an archived ancestor covers (the API's answers are already
+  in it, see `known-fn`)."
+  [{:keys [cache known-fn]} artifact]
   (let [{:keys [newly-known] :as result}
-        (scan/lookup path known-fn #(cache/known? cache %))]
+        (scan/status artifact known-fn #(cache/known? cache %))]
     (cache/add! cache newly-known)
     result))
 
@@ -252,14 +253,18 @@
 (defn- qualified-swhid
   "The artifact at `path` as a qualified SWHID (see `qualify`), verified
   against the archive: its content, and HEAD as anchor only when it
-  holds this content at this path and the archive knows it."
+  holds this content at this path and the archive knows it. A directory
+  in a Git repository stands for its tracked working tree: a 400 when
+  nothing in it is tracked, before the archive is asked."
   [{:keys [cache known-fn api-opts origin-opts] :as ctx} path lines]
   (let [f (scan/normalize path)
-        {:keys [swhid archived]} (lookup! ctx path)
-        core (swhid/parse swhid)
-        _ (when (and lines (not (swhid/content? core)))
+        {:keys [dir? repo tracked?] :as artifact} (scan/artifact path)
+        _ (when (and dir? repo (not tracked?))
+            (fail 400 (str "Nothing is tracked in " f) {:path path}))
+        _ (when (and lines dir?)
             (fail 400 "lines apply to a file, not a directory" {:path path}))
-        repo (scan/repo-root f)
+        {:keys [swhid archived]} (lookup! ctx artifact)
+        core (swhid/parse swhid)
         rel (when repo (scan/relpath repo f))
         {:keys [origin visit]} (when repo (origin/lookup repo api-opts origin-opts))
         anchor (when (and origin (origin/public? origin))
@@ -308,7 +313,7 @@
       [:get "/tree"]
       (respond 200 (with-provenances ctx (scan/scan (dir!) known-fn #(cache/known? cache %))))
       [:get "/file"]
-      (respond 200 (select-keys (lookup! ctx (path!)) [:swhid :archived]))
+      (respond 200 (select-keys (lookup! ctx (scan/artifact (path!))) [:swhid :archived]))
       [:get "/swhid"]
       (respond 200 (qualified-swhid ctx (path!) (parse-lines (get params "lines"))))
       [:get "/origin"]
