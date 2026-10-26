@@ -30,6 +30,16 @@
     (some->> (pick-remote tracked remotes)
              (git-out path "remote" "get-url"))))
 
+(defn upstream-commit
+  "Hash of the commit the upstream of the repository's current branch
+  points at, as of the last fetch: what its remote holds, whatever is
+  committed but not pushed yet. nil without an upstream, or when it is
+  a local branch."
+  [path]
+  (when (some-> (git-out path "rev-parse" "--symbolic-full-name" "@{upstream}")
+                (str/starts-with? "refs/remotes/"))
+    (git-out path "rev-parse" "--verify" "-q" "@{upstream}^{commit}")))
+
 (defn normalize
   "The archive's form of a Git remote URL: https, no user, no trailing
   slash, no \".git\" suffix. ssh:// and git:// URLs and scp-like

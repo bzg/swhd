@@ -74,7 +74,7 @@ Optionally set =SWHD_PORT= and =SWH_API_TOKEN=, one ~KEY=value~ per line, in
 #+begin_src shell
 systemctl --user daemon-reload
 systemctl --user enable --now swhd
-curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.5.1","authenticated":false}
+curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.6.0","authenticated":false}
 journalctl --user -u swhd -f     # logs
 #+end_src
 
@@ -108,6 +108,14 @@ keeps for the artifacts it lists, without asking the archive.
 =/origin= and =/save= return under =origin= the URL they used for the
 repository: the remote's URL in the archive's form, with =.git= when
 that is how the archive knows it.
+
+With =upstream= (=/origin?path=DIR&upstream=), =/origin= also gives,
+for an archived origin, the commit of the current branch's upstream
+(as of the last fetch: what the remote holds, not what is not pushed
+yet) as a revision SWHID under =upstream=, and whether the archive
+holds it under =upstream-archived=: an archived origin whose upstream
+is not is one to save again.  Both are left out when the origin is
+not archived, and when the branch has no remote upstream.
 
 =/swhid= takes a file or a directory and an optional =lines=A-B= (or
 =lines=A=) for a file, and answers with a qualified SWHID verified

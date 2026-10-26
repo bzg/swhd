@@ -644,3 +644,66 @@
     (is (nil? (daemon/env-token nil)) "unset")
     (is (nil? (daemon/env-token "")) "empty, as SWH_API_TOKEN= in an env file")
     (is (nil? (daemon/env-token "  ")) "blank")))
+
+(deftest origin-upstream-test
+  (let [work (temp-dir "swhd-test")
+        fresh-cache (fn [] (str (io/file work (str (gensym "known") ".edn"))))
+        repo (io/file work "repo")
+        git (fn [& args]
+              (let [{:keys [exit err out]}
+                    (apply sh/sh "git" "-C" (str repo)
+                           "-c" "user.name=Test" "-c" "user.email=test@example.org" args)]
+                (assert (zero? exit) err)
+                (str/trim out)))
+        commit (fn [content]
+                 (spit (io/file repo "a.txt") content)
+                 (git "add" "-A")
+                 (git "commit" "-q" "-m" content)
+                 (str "swh:1:rev:" (git "rev-parse" "HEAD")))
+        visit {:date "2026-07-01T03:14:15+00:00" :status "full" :snapshot snapshot}
+        origin-of (fn [handler query]
+                    (let [resp (handler {:request-method :get :uri "/origin"
+                                         :query-string (str "path=" (java.net.URLEncoder/encode (str repo) "UTF-8")
+                                                            query)})]
+                      (json/parse-string (:body resp) true)))
+        upstream-of (fn [known & fake-opts]
+                      (select-keys (origin-of (apply handler-for known (fresh-cache) fake-opts)
+                                              "&upstream")
+                                   [:upstream :upstream-archived]))]
+    (try
+      (.mkdir repo)
+      (git "init" "-q" "-b" "main")
+      (git "remote" "add" "origin" "https://example.org/me/repo.git")
+      (let [pushed (commit "one")]
+        (testing "a branch without upstream: nothing to tell"
+          (is (= {} (upstream-of #{pushed} :visit visit))))
+        ;; as after a push: origin/main at the first commit, tracked
+        (git "update-ref" "refs/remotes/origin/main" "HEAD")
+        (git "config" "branch.main.remote" "origin")
+        (git "config" "branch.main.merge" "refs/heads/main")
+        (commit "two")
+        (testing "without upstream, as before"
+          (is (not (contains? (origin-of (handler-for #{pushed} (fresh-cache) :visit visit) "")
+                              :upstream))))
+        (testing "the upstream, not the unpushed HEAD"
+          (is (= {:upstream pushed :upstream-archived true}
+                 (upstream-of #{pushed} :visit visit))))
+        (testing "an archived origin whose upstream is not yet"
+          (is (= {:upstream pushed :upstream-archived false}
+                 (upstream-of #{} :visit visit))))
+        (testing "an origin not archived: the archive is not asked about the upstream"
+          (let [asked (atom [])
+                handler (daemon/make-handler
+                         {:cache (cache/init (fresh-cache))
+                          :api-opts {:request (fn [{:keys [uri] :as req}]
+                                                (swap! asked conj uri)
+                                                ((fake-api #{pushed}) req))}})
+                body (origin-of handler "&upstream")]
+            (is (false? (:archived body)))
+            (is (not (contains? body :upstream)))
+            (is (not-any? #(str/ends-with? % "/known/") @asked))))
+        (testing "a local branch as upstream: nothing to tell"
+          (git "config" "branch.main.remote" ".")
+          (git "config" "branch.main.merge" "refs/heads/main")
+          (is (= {} (upstream-of #{pushed} :visit visit)))))
+      (finally (delete-recursively work)))))

@@ -17,8 +17,12 @@
                          visit, anchor, path, lines), verified against
                          the archive, with its browse URL; a 400 for a
                          directory where nothing is tracked
-  GET  /origin?path=DIR  the repo's origin remote in the archive:
-                         archived, date of the last archival
+  GET  /origin?path=DIR[&upstream]
+                         the repo's origin remote in the archive:
+                         archived, date of the last archival; with
+                         upstream, for an archived origin, also the
+                         current branch's upstream as a revision SWHID
+                         and whether the archive holds it
   GET  /visits?path=DIR[&n=10]
                          the last n archival visits of the origin
   POST /save?path=DIR    save code now on the repo's origin remote
@@ -46,7 +50,7 @@
 (def version
   "This daemon's version, which /ping gives: clients such as swh.el use
   it to tell an outdated daemon. Bump it with each release tag."
-  "0.5.1")
+  "0.6.0")
 
 (defn- fail
   "Throw a daemon error answered with HTTP `status`."
@@ -199,13 +203,29 @@
         tree))
 
 (defn- resolve-origin!
-  "swhd.origin/lookup for the repository holding `path`; a 400 outside
-  a Git repository or without a remote."
+  "swhd.origin/lookup for the repository holding `path`, with the
+  repository's root under :repo; a 400 outside a Git repository or
+  without a remote."
   [{:keys [api-opts origin-opts]} path]
   (let [repo (or (scan/repo-root (scan/normalize path))
                  (fail 400 "Not a Git repository" {:path path}))]
-    (or (origin/lookup repo api-opts origin-opts)
-        (fail 400 "No remote" {:path path}))))
+    (assoc (or (origin/lookup repo api-opts origin-opts)
+               (fail 400 "No remote" {:path path}))
+           :repo repo)))
+
+(defn- archived?
+  "True when the archive holds the core SWHID string `s`: the cache
+  first, then the archive."
+  [{:keys [cache known-fn]} s]
+  (boolean (or (cache/known? cache s) (get (known-fn [s]) s))))
+
+(defn- upstream-revision
+  "The upstream of `repo`'s current branch as a core revision SWHID
+  string, see swhd.origin/upstream-commit."
+  [repo]
+  (some->> (origin/upstream-commit repo)
+           (swhid/make :revision)
+           swhid/swhid->string))
 
 ;;; Qualified SWHIDs
 
@@ -256,7 +276,7 @@
   holds this content at this path and the archive knows it. A directory
   in a Git repository stands for its tracked working tree: a 400 when
   nothing in it is tracked, before the archive is asked."
-  [{:keys [cache known-fn api-opts origin-opts] :as ctx} path lines]
+  [{:keys [api-opts origin-opts] :as ctx} path lines]
   (let [f (scan/normalize path)
         {:keys [dir? repo tracked?] :as artifact} (scan/artifact path)
         _ (when (and dir? repo (not tracked?))
@@ -269,8 +289,7 @@
         {:keys [origin visit]} (when repo (origin/lookup repo api-opts origin-opts))
         anchor (when (and origin (origin/public? origin))
                  (when-let [rev (head-anchor repo rel (:hash core))]
-                   (when (or (cache/known? cache rev) (get (known-fn [rev]) rev))
-                     rev)))
+                   (when (archived? ctx rev) rev)))
         qualified (swhid/swhid->string
                    (qualify core {:origin origin
                                   :snapshot (:snapshot visit)
@@ -317,9 +336,15 @@
       [:get "/swhid"]
       (respond 200 (qualified-swhid ctx (path!) (parse-lines (get params "lines"))))
       [:get "/origin"]
-      (let [{:keys [origin visit]} (resolve-origin! ctx (path!))]
-        (respond 200 (merge {:origin origin :archived (some? visit)}
-                            (select-keys visit [:date :status :snapshot]))))
+      (let [{:keys [repo origin visit]} (resolve-origin! ctx (path!))
+            ;; only an archived origin, hence a public one: the archive
+            ;; is not told about the commits of a private repo
+            upstream (when (and (contains? params "upstream") visit)
+                       (upstream-revision repo))]
+        (respond 200 (cond-> (merge {:origin origin :archived (some? visit)}
+                                    (select-keys visit [:date :status :snapshot]))
+                       upstream (assoc :upstream upstream
+                                       :upstream-archived (archived? ctx upstream)))))
       [:get "/visits"]
       (let [{:keys [origin visit]} (resolve-origin! ctx (path!))
             n (if-let [raw (get params "n")] (parse-long raw) 10)]
