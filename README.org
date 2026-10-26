@@ -50,8 +50,9 @@ On GNU/Linux, you can run the daemon as a systemd user service.
 
 Create =~/.config/systemd/user/swhd.service=, with the absolute path to
 the =swhd= script (=command -v swhd=).  The script finds =bb= on the
-=PATH=: when =bb= is neither in =/usr/local/bin= nor in =/usr/bin=, add
-an ~Environment=PATH=...~ line naming its directory.
+=PATH= of systemd, which may hold another, older =bb= than yours: when
+=command -v bb= is neither =/usr/local/bin/bb= nor =/usr/bin/bb=, add
+an ~Environment=PATH=...~ line putting its directory first.
 
 #+begin_src conf
 [Unit]
@@ -73,7 +74,7 @@ Optionally set =SWHD_PORT= and =SWH_API_TOKEN=, one ~KEY=value~ per line, in
 #+begin_src shell
 systemctl --user daemon-reload
 systemctl --user enable --now swhd
-curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.4.0"}
+curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.4.0","authenticated":false}
 journalctl --user -u swhd -f     # logs
 #+end_src
 
