@@ -396,11 +396,9 @@
     (System/exit 0))
   (let [port (port-from-env)
         token (env-token (System/getenv "SWH_API_TOKEN"))
-        handler (make-handler {:cache (cache/init (cache/default-file))
-                               :provenance (cache/init-provenance
-                                            (cache/default-provenance-file))
-                               :api-opts (when token {:token token})
-                               :log log-stderr})]
+        handler (make-handler (assoc (cache/init-defaults log-stderr)
+                                     :api-opts (when token {:token token})
+                                     :log log-stderr))]
     (srv/run-server handler {:port port :ip "127.0.0.1"})
     (log-stderr (str "swhd listening on http://127.0.0.1:" port
                      (when token " (authenticated)")))

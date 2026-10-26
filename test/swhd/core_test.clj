@@ -53,7 +53,7 @@
 (deftest handler-test
   (let [work (temp-dir "swhd-test")
         project (io/file work "project")
-        cache-file (str (io/file work "known.edn"))]
+        cache-file (str (io/file work "known.log"))]
     (try
       (.mkdir project)
       (spit (io/file project "a.txt") "aaa\n")
@@ -198,7 +198,7 @@
 
 (deftest upstream-errors-test
   (let [work (temp-dir "swhd-test")
-        cache-file (str (io/file work "known.edn"))
+        cache-file (str (io/file work "known.log"))
         repo (io/file work "repo")]
     (try
       (.mkdir repo)
@@ -234,7 +234,7 @@
 
 (deftest origin-cache-test
   (let [work (temp-dir "swhd-test")
-        cache-file (str (io/file work "known.edn"))
+        cache-file (str (io/file work "known.log"))
         repo (io/file work "repo")
         visits (atom 0)
         request (fn [{:keys [uri]}]
@@ -280,7 +280,7 @@
 
 (deftest provenance-test
   (let [work (temp-dir "swhd-test")
-        file (str (io/file work "provenance.edn"))
+        file (str (io/file work "provenance.log"))
         cnt "swh:1:cnt:94a9ed024d3859793618152ea559a168bbcbb5e2"
         other "swh:1:cnt:0000000000000000000000000000000000000000"
         found (str cnt ";origin=https://example.org/lib;anchor=swh:1:rel:"
@@ -295,7 +295,7 @@
                            "null")})
         make (fn [& [ttl]]
                (daemon/make-handler
-                (cond-> {:cache (cache/init (str (io/file work "known.edn")))
+                (cond-> {:cache (cache/init (str (io/file work "known.log")))
                          :provenance (cache/init-provenance file)
                          :api-opts {:request request}}
                   ttl (assoc :origin-ttl-ms ttl))))
@@ -350,7 +350,7 @@
         a (io/file work "a.txt")
         seen (atom [])
         handler (daemon/make-handler
-                 {:cache (cache/init (str (io/file work "known.edn")))
+                 {:cache (cache/init (str (io/file work "known.log")))
                   :api-opts {:token "env-token"
                              :request (fn [{:keys [headers]}]
                                         (swap! seen conj (get headers "Authorization"))
@@ -368,7 +368,7 @@
 
 (deftest logging-test
   (let [work (temp-dir "swhd-test")
-        cache-file (str (io/file work "known.edn"))
+        cache-file (str (io/file work "known.log"))
         project (io/file work "project")
         lines (atom [])]
     (try
@@ -390,7 +390,7 @@
 (deftest error-handling-test
   (let [work (temp-dir "swhd-test")
         project (io/file work "project")
-        cache-file (str (io/file work "known.edn"))]
+        cache-file (str (io/file work "known.log"))]
     (try
       (.mkdir project)
       (spit (io/file project "a.txt") "aaa\n")
