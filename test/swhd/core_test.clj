@@ -60,7 +60,7 @@
       (let [file-swhid (swhid/swhid->string (h/path-swhid (io/file project "a.txt")))
             handler (handler-for #{file-swhid} cache-file)]
         (testing "/ping"
-          (is (= [200 {:pong true}] (get-json handler :get "/ping"))))
+          (is (= [200 {:pong true :version daemon/version}] (get-json handler :get "/ping"))))
         (testing "/tree"
           (let [[status body] (get-json handler :get "/tree" (str project))]
             (is (= 200 status))
@@ -578,6 +578,7 @@
   (testing "query strings"
     (is (= {} (daemon/query-params nil)))
     (is (= {"path" "/a b" "n" ""} (daemon/query-params "path=%2Fa%20b&n")))
+    (is (= {"path" "/tmp/c++"} (daemon/query-params "path=/tmp/c++")) "+ is literal")
     (is (nil? (daemon/query-params "path=%zz")) "malformed"))
   (testing "bearer tokens"
     (is (= "t0k" (daemon/bearer-token {"authorization" "Bearer t0k"})))

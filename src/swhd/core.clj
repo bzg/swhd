@@ -3,7 +3,7 @@
   against the Software Heritage archive (swh-api), caches positive
   answers, and serves a small JSON API over HTTP on 127.0.0.1.
 
-  GET  /ping             liveness check
+  GET  /ping             liveness check, with the daemon's version
   GET  /tree?path=DIR    every artifact of the directory: swhid, dir?,
                          archived (Merkle-pruned: an archived directory
                          covers everything under it)
@@ -40,20 +40,27 @@
 
 ;;; HTTP plumbing
 
+(def version
+  "This daemon's version, which /ping gives: clients such as swh.el use
+  it to tell an outdated daemon. Bump it with each release tag."
+  "0.2.0")
+
 (defn- fail
   "Throw a daemon error answered with HTTP `status`."
   [status msg & [data]]
   (throw (ex-info msg (assoc data :swhd/status status))))
 
 (defn query-params
-  "The query string as a map, nil when it cannot be decoded."
+  "The query string as a map, nil when it cannot be decoded. A \"+\" is
+  a plus sign, not a space: clients encode spaces as %20, and a path
+  such as /tmp/c++ must reach us as is."
   [query-string]
   (try
     (into {}
           (for [kv (str/split (or query-string "") #"&")
                 :when (seq kv)
                 :let [[k v] (str/split kv #"=" 2)]]
-            [k (java.net.URLDecoder/decode (or v "") "UTF-8")]))
+            [k (java.net.URLDecoder/decode (str/replace (or v "") "+" "%2B") "UTF-8")]))
     (catch IllegalArgumentException _ nil)))
 
 (defn bearer-token
@@ -284,7 +291,7 @@
       (fail 403 "Forbidden: not a local request"))
     (case [request-method uri]
       [:get "/ping"]
-      (respond 200 {:pong true})
+      (respond 200 {:pong true :version version})
       [:get "/tree"]
       (respond 200 (scan/scan (dir!) known-fn #(cache/known? cache %)))
       [:get "/file"]
@@ -383,7 +390,10 @@
             (System/exit 1))))
     8642))
 
-(defn -main [& _]
+(defn -main [& args]
+  (when (some #{"--version"} args)
+    (println "swhd" version)
+    (System/exit 0))
   (let [port (port-from-env)
         token (env-token (System/getenv "SWH_API_TOKEN"))
         handler (make-handler {:cache (cache/init (cache/default-file))
