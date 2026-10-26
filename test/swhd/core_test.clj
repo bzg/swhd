@@ -68,6 +68,16 @@
             ;; the root directory itself is not known
             (is (false? (get-in body [(keyword ".") :archived])))
             (is (str/starts-with? (get-in body [(keyword ".") :swhid]) "swh:1:dir:"))))
+        (testing "/tree gives the provenances the cache holds, asking nothing"
+          (let [found (str file-swhid ";origin=https://example.org/lib")
+                handler (daemon/make-handler
+                         {:cache (cache/init cache-file)
+                          :provenance (doto (cache/init-provenance nil)
+                                        (cache/add-provenance! file-swhid found))
+                          :api-opts {:request (fake-api #{file-swhid})}})
+                [_ body] (get-json handler :get "/tree" (str project))]
+            (is (= found (get-in body [(keyword "a.txt") :provenance])))
+            (is (not (contains? (get body (keyword ".")) :provenance)))))
         (testing "/file + cache persistence"
           (let [[status body] (get-json handler :get "/file" (str (io/file project "a.txt")))]
             (is (= 200 status))

@@ -73,7 +73,7 @@ Optionally set =SWHD_PORT= and =SWH_API_TOKEN=, one ~KEY=value~ per line, in
 #+begin_src shell
 systemctl --user daemon-reload
 systemctl --user enable --now swhd
-curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.2.0"}
+curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.3.0"}
 journalctl --user -u swhd -f     # logs
 #+end_src
 
@@ -84,7 +84,7 @@ The service starts at your first login.
 | Route                       | Description                                   |
 |-----------------------------+-----------------------------------------------|
 | =GET /ping=                   | liveness check, with the daemon's version     |
-| =GET /tree?path=DIR=          | every artifact: swhid, dir?, archived         |
+| =GET /tree?path=DIR=          | every artifact: swhid, dir?, archived, …      |
 | =GET /file?path=FILE=         | one artifact: swhid, archived                 |
 | =GET /swhid?path=FILE=        | the artifact as a qualified SWHID (see below) |
 | =GET /origin?path=DIR=        | archival status and date of the repo's origin |
@@ -101,7 +101,8 @@ qualified SWHID the archive's provenance API gives, whose =origin= and
 =anchor= name an origin and the release or revision holding the
 artifact there; =null= when it knows none.  This API needs a token with
 a special permission.  A provenance found is kept for good; that there
-is none, for ten minutes.
+is none, for ten minutes.  =/tree= gives under =provenance= those it
+keeps for the artifacts it lists, without asking the archive.
 
 =/origin= and =/save= return under =origin= the URL they used for the
 repository: the remote's URL in the archive's form, with =.git= when

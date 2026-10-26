@@ -6,7 +6,8 @@
   GET  /ping             liveness check, with the daemon's version
   GET  /tree?path=DIR    every artifact of the directory: swhid, dir?,
                          archived (Merkle-pruned: an archived directory
-                         covers everything under it)
+                         covers everything under it), and provenance
+                         when the provenance cache holds it
   GET  /file?path=FILE   one artifact: swhid, archived (a directory
                          path yields its dir SWHID); in a Git repo, an
                          archived ancestor directory covers it
@@ -43,7 +44,7 @@
 (def version
   "This daemon's version, which /ping gives: clients such as swh.el use
   it to tell an outdated daemon. Bump it with each release tag."
-  "0.2.0")
+  "0.3.0")
 
 (defn- fail
   "Throw a daemon error answered with HTTP `status`."
@@ -184,6 +185,17 @@
             (do (swap! misses assoc s {:value true :at now})
                 nil))))))
 
+(defn- with-provenances
+  "The `tree` of swhd.scan/scan, each node the provenance cache holds a
+  provenance for carrying it: what is known already, never asked."
+  [{:keys [provenance]} tree]
+  (into (sorted-map)
+        (map (fn [[p {:keys [swhid] :as node}]]
+               [p (if-let [found (cache/provenance provenance swhid)]
+                    (assoc node :provenance found)
+                    node)]))
+        tree))
+
 (defn- resolve-origin!
   "swhd.origin/lookup for the repository holding `path`; a 400 outside
   a Git repository or without a remote."
@@ -293,7 +305,7 @@
       [:get "/ping"]
       (respond 200 {:pong true :version version})
       [:get "/tree"]
-      (respond 200 (scan/scan (dir!) known-fn #(cache/known? cache %)))
+      (respond 200 (with-provenances ctx (scan/scan (dir!) known-fn #(cache/known? cache %))))
       [:get "/file"]
       (respond 200 (select-keys (lookup! ctx (path!)) [:swhid :archived]))
       [:get "/swhid"]
