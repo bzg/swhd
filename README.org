@@ -74,7 +74,7 @@ Optionally set =SWHD_PORT= and =SWH_API_TOKEN=, one ~KEY=value~ per line, in
 #+begin_src shell
 systemctl --user daemon-reload
 systemctl --user enable --now swhd
-curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.5.0","authenticated":false}
+curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.5.1","authenticated":false}
 journalctl --user -u swhd -f     # logs
 #+end_src
 

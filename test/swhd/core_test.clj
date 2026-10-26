@@ -579,6 +579,28 @@
                    (swhid-of handler new)))
             (is (false? @asked))
             (delete-recursively new)))
+        (testing "a symbolic link to a directory is the link, as Git stores it: lines apply, and no 400"
+          (let [link (io/file repo "link")
+                out (io/file work "out")
+                ulink (io/file repo "ulink")
+                handler (handler-for #{} (fresh-cache))]
+            (.mkdir out)
+            (java.nio.file.Files/createSymbolicLink (.toPath link) (.toPath (io/file "sub"))
+                                                    (make-array java.nio.file.attribute.FileAttribute 0))
+            (java.nio.file.Files/createSymbolicLink (.toPath ulink) (.toPath out)
+                                                    (make-array java.nio.file.attribute.FileAttribute 0))
+            (git "add" "link")
+            (let [[status body] (swhid-of handler link "1")]
+              (is (= 200 status))
+              (is (str/starts-with? (:swhid body) "swh:1:cnt:"))
+              (is (str/ends-with? (:swhid body) ";lines=1")))
+            (let [[status body] (swhid-of handler ulink)]
+              (is (= 200 status))
+              (is (str/starts-with? (:swhid body) "swh:1:cnt:")))
+            (git "rm" "-q" "--cached" "link")
+            (.delete link)
+            (.delete ulink)
+            (.delete out)))
         (testing "the root directory is anchored at path /"
           (let [handler (handler-for #{rev} (fresh-cache) :visit visit)]
             (is (str/ends-with? (:swhid (second (swhid-of handler repo))) (str ";anchor=" rev ";path=/")))))

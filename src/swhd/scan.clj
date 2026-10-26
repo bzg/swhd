@@ -15,7 +15,8 @@
             [clojure.string :as str]
             [swhid.core :as swhid]
             [swhid.git :as g]
-            [swhid.hash :as h]))
+            [swhid.hash :as h])
+  (:import (java.nio.file Files LinkOption)))
 
 (defn- ancestor-dirs
   "Ancestor directories of a relative path: \"a/b/c\" -> (\".\" \"a\" \"a/b\"),
@@ -127,7 +128,8 @@
   tracked working tree, and :dirs the SWHIDs of its ancestor directories;
   an untracked file is hashed as `git add` would store it (clean
   filters), like a tracked one. An untracked directory, or an artifact
-  outside a repository, is hashed as it is on disk."
+  outside a repository, is hashed as it is on disk. A symbolic link is
+  not a directory: as Git stores it, its SWHID is that of its text."
   [path]
   (let [f (normalize path)
         {:keys [repo nodes rel]} (in-repo f)
@@ -135,7 +137,7 @@
     {:swhid (cond tracked? (nodes rel)
                   (and repo (.isFile f)) (swhid/swhid->string (g/blob-swhid repo rel))
                   :else (swhid/swhid->string (h/path-swhid f exclude-git)))
-     :dir? (.isDirectory f)
+     :dir? (Files/isDirectory (.toPath f) (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
      :repo repo
      :tracked? tracked?
      :dirs (when tracked? (map nodes (ancestor-dirs rel)))}))
