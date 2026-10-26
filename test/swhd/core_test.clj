@@ -60,7 +60,14 @@
       (let [file-swhid (swhid/swhid->string (h/path-swhid (io/file project "a.txt")))
             handler (handler-for #{file-swhid} cache-file)]
         (testing "/ping"
-          (is (= [200 {:pong true :version daemon/version}] (get-json handler :get "/ping"))))
+          (is (= [200 {:pong true :version daemon/version :authenticated false}]
+                 (get-json handler :get "/ping")))
+          (testing "with a token of its own, even to a client bringing one"
+            (let [handler (daemon/make-handler {:cache (cache/init cache-file)
+                                                :api-opts {:token "own"}})
+                  resp (handler {:request-method :get :uri "/ping"
+                                 :headers {"authorization" "Bearer client"}})]
+              (is (true? (:authenticated (json/parse-string (:body resp) true)))))))
         (testing "/tree"
           (let [[status body] (get-json handler :get "/tree" (str project))]
             (is (= 200 status))

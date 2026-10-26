@@ -73,7 +73,7 @@ Optionally set =SWHD_PORT= and =SWH_API_TOKEN=, one ~KEY=value~ per line, in
 #+begin_src shell
 systemctl --user daemon-reload
 systemctl --user enable --now swhd
-curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.3.0"}
+curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.4.0"}
 journalctl --user -u swhd -f     # logs
 #+end_src
 
@@ -83,7 +83,7 @@ The service starts at your first login.
 
 | Route                       | Description                                   |
 |-----------------------------+-----------------------------------------------|
-| =GET /ping=                   | liveness check, with the daemon's version     |
+| =GET /ping=                   | liveness check: version, own token or not     |
 | =GET /tree?path=DIR=          | every artifact: swhid, dir?, archived, …      |
 | =GET /file?path=FILE=         | one artifact: swhid, archived                 |
 | =GET /swhid?path=FILE=        | the artifact as a qualified SWHID (see below) |

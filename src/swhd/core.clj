@@ -3,7 +3,8 @@
   against the Software Heritage archive (swh-api), caches positive
   answers, and serves a small JSON API over HTTP on 127.0.0.1.
 
-  GET  /ping             liveness check, with the daemon's version
+  GET  /ping             liveness check, with the daemon's version and
+                         whether it has a token of its own
   GET  /tree?path=DIR    every artifact of the directory: swhid, dir?,
                          archived (Merkle-pruned: an archived directory
                          covers everything under it), and provenance
@@ -44,7 +45,7 @@
 (def version
   "This daemon's version, which /ping gives: clients such as swh.el use
   it to tell an outdated daemon. Bump it with each release tag."
-  "0.3.0")
+  "0.4.0")
 
 (defn- fail
   "Throw a daemon error answered with HTTP `status`."
@@ -289,7 +290,7 @@
 
 (defn- route
   "Response for `request` with its query `params`."
-  [{:keys [cache known-fn api-opts origin-opts] :as ctx}
+  [{:keys [cache known-fn api-opts origin-opts authenticated] :as ctx}
    {:keys [request-method uri headers]} params]
   (let [path (get params "path")
         ;; Every route but /ping needs an existing path: 400 otherwise.
@@ -303,7 +304,7 @@
       (fail 403 "Forbidden: not a local request"))
     (case [request-method uri]
       [:get "/ping"]
-      (respond 200 {:pong true :version version})
+      (respond 200 {:pong true :version version :authenticated authenticated})
       [:get "/tree"]
       (respond 200 (with-provenances ctx (scan/scan (dir!) known-fn #(cache/known? cache %))))
       [:get "/file"]
@@ -352,8 +353,11 @@
         visits (atom {})
         provenance (or provenance (cache/init-provenance nil))
         misses (atom {})
+        ;; the daemon's own token, which clients without one rely on
+        authenticated (some? (:token api-opts))
         ctx-for (fn [api-opts]
                   {:cache cache
+                   :authenticated authenticated
                    :provenance provenance
                    :misses misses
                    :ttl-ms (or origin-ttl-ms origin/default-ttl-ms)
