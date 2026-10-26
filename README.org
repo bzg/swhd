@@ -2,7 +2,7 @@
 #+options: toc:nil num:nil
 
 A local daemon exposing the [[https://archive.softwareheritage.org][Software Heritage]] archival status of your
-files as a small JSON API on =127.0.0.1=, for clients such as [[https://github.com/bzg/swh.el][swh.el]]
+files as a small JSON API on =127.0.0.1=, for clients such as [[https://github.com/bzg/swh.el][swh.el]].
 
 It computes SWHIDs locally, checks them against the archive and caches
 answers in =$XDG_CACHE_HOME/swhd/known.edn= (a SWHID is immutable). What
@@ -17,11 +17,26 @@ The repository's origin is looked up in the archive's form, i.e.
 
 The daemon answers local clients only.
 
+* Install
+
+With [[https://github.com/babashka/bbin][bbin]]:
+
+#+begin_src shell
+bbin install io.github.bzg/swhd
+#+end_src
+
+This puts a =swhd= script in bbin's directory (=~/.local/bin= by default),
+which must be on your =PATH=.
+
+=swhd --version= and =/ping= tell the installed version.
+
 * Run
 
 #+begin_src shell
-bb daemon  # SWHD_PORT (default 8642), SWH_API_TOKEN (higher rate limits)
+swhd  # SWHD_PORT (default 8642), SWH_API_TOKEN (higher rate limits)
 #+end_src
+
+If you cloned this repository, =bb daemon= does the same.
 
 A client may bring its own token in an =Authorization: Bearer= header,
 as swh.el does with =swh-api-token=; it then takes precedence over
@@ -32,14 +47,16 @@ as swh.el does with =swh-api-token=; it then takes precedence over
 On GNU/Linux, you can run the daemon as a systemd user service.
 
 Create =~/.config/systemd/user/swhd.service=, with the absolute path to
-=bb= (=command -v bb=) and to this repository's =bb.edn=:
+the =swhd= script (=command -v swhd=).  The script finds =bb= on the
+=PATH=: when =bb= is neither in =/usr/local/bin= nor in =/usr/bin=, add
+an ~Environment=PATH=...~ line naming its directory.
 
 #+begin_src conf
 [Unit]
 Description=swhd, local Software Heritage status daemon
 
 [Service]
-ExecStart=/path/to/bb --config %h/src/swhd/bb.edn daemon
+ExecStart=%h/.local/bin/swhd
 EnvironmentFile=-%h/.config/swhd/env
 Restart=on-failure
 RestartSec=5
@@ -54,7 +71,7 @@ Optionally set =SWHD_PORT= and =SWH_API_TOKEN=, one ~KEY=value~ per line, in
 #+begin_src shell
 systemctl --user daemon-reload
 systemctl --user enable --now swhd
-curl http://127.0.0.1:8642/ping  # {"pong":true}
+curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.2.0"}
 journalctl --user -u swhd -f     # logs
 #+end_src
 
@@ -64,7 +81,7 @@ The service starts at your first login.
 
 | Route                       | Description                                   |
 |-----------------------------+-----------------------------------------------|
-| =GET /ping=                   | liveness check                                |
+| =GET /ping=                   | liveness check, with the daemon's version     |
 | =GET /tree?path=DIR=          | every artifact: swhid, dir?, archived         |
 | =GET /file?path=FILE=         | one artifact: swhid, archived                 |
 | =GET /swhid?path=FILE=        | the artifact as a qualified SWHID (see below) |

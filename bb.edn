@@ -1,12 +1,13 @@
-{:paths ["src" "test"]
- :deps {io.github.bzg/swhid {:mvn/version "0.1.0"}
-        io.github.bzg/swh-api {:mvn/version "0.1.1"}}
+{;; the daemon itself, with its deps.edn dependencies
+ :deps {io.github.bzg/swhd {:local/root "."}}
+ :bbin/bin {swhd {:main-opts ["-m" "swhd.core"]}}
  :tasks
  {daemon
   {:doc "Run the daemon (SWHD_PORT, SWH_API_TOKEN)"
    :task (exec 'swhd.core/-main)}
   test
   {:doc "Run the test suite"
+   :extra-paths ["test"]
    :requires ([clojure.test :as t])
    :task (do
            (require 'swhd.cache-test 'swhd.origin-test 'swhd.scan-test 'swhd.core-test)
