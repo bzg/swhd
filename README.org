@@ -74,7 +74,7 @@ Optionally set =SWHD_PORT= and =SWH_API_TOKEN=, one ~KEY=value~ per line, in
 #+begin_src shell
 systemctl --user daemon-reload
 systemctl --user enable --now swhd
-curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.6.0","authenticated":false}
+curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.7.0","authenticated":false}
 journalctl --user -u swhd -f     # logs
 #+end_src
 
@@ -129,12 +129,19 @@ against the archive:
 #+end_src
 
 Inside a Git repository with a public remote, the identifier carries
-the origin, the snapshot of the archive's latest visit, the HEAD
-revision as anchor when the archive knows it (and then the path from
-the repository root). Outside, or without a remote, it is the bare
-=cnt=/=dir= SWHID, with the lines. Inside a repository, a directory
-stands for its tracked working tree: one where nothing is tracked is a
-400.
+the origin, the snapshot of the archive's latest visit, as anchor the
+most recent commit that holds this content at this path and that the
+archive knows (HEAD itself, or an older one when HEAD is not archived
+yet: among HEAD's last 100 commits, and the one that last changed the
+path), and then the path from the repository root.
+Outside, or without a remote, it is the bare =cnt=/=dir= SWHID, with
+the lines. Inside a repository, a directory stands for its tracked
+working tree: one where nothing is tracked is a 400.
+
+With =archived=, it is the version the archive holds instead: that of
+the most recent of HEAD's last 100 commits it holds, anchored at that
+commit, which comes as =version=; without lines, as they may not be
+that version's. When the archive holds none, the working tree's.
 
 The repository's remote is the one its current branch tracks, else
 =origin=, else the only one there is. 

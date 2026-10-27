@@ -12,11 +12,13 @@
   GET  /file?path=FILE   one artifact: swhid, archived (a directory
                          path yields its dir SWHID); in a Git repo, an
                          archived ancestor directory covers it
-  GET  /swhid?path=FILE[&lines=A[-B]]
+  GET  /swhid?path=FILE[&lines=A[-B]][&archived]
                          the artifact as a qualified SWHID (origin,
                          visit, anchor, path, lines), verified against
                          the archive, with its browse URL; a 400 for a
-                         directory where nothing is tracked
+                         directory where nothing is tracked; with
+                         archived, the version the archive holds,
+                         without lines
   GET  /origin?path=DIR[&upstream]
                          the repo's origin remote in the archive:
                          archived, date of the last archival; with
@@ -42,7 +44,6 @@
             [swhd.origin :as origin]
             [swhd.scan :as scan]
             [swhid.core :as swhid]
-            [swhid.git :as g]
             [swhid.qualifier :as q]))
 
 ;;; HTTP plumbing
@@ -50,7 +51,7 @@
 (def version
   "This daemon's version, which /ping gives: clients such as swh.el use
   it to tell an outdated daemon. Bump it with each release tag."
-  "0.6.0")
+  "0.7.0")
 
 (defn- fail
   "Throw a daemon error answered with HTTP `status`."
@@ -254,16 +255,81 @@
       (and anchor rel) (swhid/with-path (if (= rel ".") "/" (str "/" rel)))
       lines (swhid/with-lines (first lines) (second lines)))))
 
-(defn- head-anchor
-  "HEAD as a core revision SWHID string, when the object at `rel` in HEAD
-  is the one whose `hash` is given: an anchor must hold the content the
-  identifier is about (the archive knowing HEAD is checked by the
-  caller). nil otherwise, or on an unborn HEAD."
+(def ^:private anchor-candidates-max
+  "Number of the most recent commits that may anchor a SWHID; beyond
+  them, only the commit that last changed the artifact may."
+  100)
+
+(defn- object-at
+  "Hash of the object at `rel` (\".\" for the root directory) in
+  `commit` of `repo`, of `type` (\"blob\" or \"tree\") when given; nil
+  when it has none."
+  [repo commit rel & [type]]
+  (when-let [hash (origin/git-out repo "rev-parse" "--verify" "-q"
+                                  (if (= rel ".") (str commit "^{tree}") (str commit ":" rel)))]
+    (when (or (nil? type) (= type (origin/git-out repo "cat-file" "-t" hash)))
+      hash)))
+
+(defn- rev-list
+  "Hashes of HEAD's last `anchor-candidates-max` commits in `repo`, most
+  recent first, with the git rev-list `args` after HEAD."
+  [repo & args]
+  (some-> (apply origin/git-out repo "rev-list" (str "--max-count=" anchor-candidates-max)
+                 "HEAD" args)
+          str/split-lines))
+
+(defn- holds?
+  "True when `commit` of `repo` holds the object whose `hash` is given at
+  `rel`."
+  [repo commit rel hash]
+  (= hash (object-at repo commit rel)))
+
+(defn- revision
+  "The commit hash `commit` as a core revision SWHID string."
+  [commit]
+  (swhid/swhid->string (swhid/make :revision commit)))
+
+(defn- archived-commits
+  "Those of `commits` (hashes, most recent first) the archive holds,
+  lazily and in order. The archive is asked once, only about those more
+  recent than the first one the cache knows."
+  [{:keys [cache known-fn]} commits]
+  (let [cached? #(cache/known? cache (revision %))
+        unknown (map revision (take-while (complement cached?) commits))
+        answer (if (seq unknown) (known-fn unknown) {})]
+    (filter #(or (cached? %) (get answer (revision %))) commits)))
+
+(defn- anchor-candidates
+  "Commits of HEAD's history that may hold the object whose `hash` is
+  given at `rel`, most recent first: an anchor must hold the content the
+  identifier is about. From HEAD back to the commit that last changed
+  `rel`, the most recent `anchor-candidates-max` and that one; a commit
+  merged from another branch may not hold it (see `holds?`). None when
+  HEAD does not hold it (an edited or untracked file is not in it)."
   [repo rel hash]
-  (when (= hash (g/rev-parse repo (if (= rel ".") "HEAD^{tree}" (str "HEAD:" rel))))
-    (some->> (g/rev-parse repo "HEAD^{commit}")
-             (swhid/make :revision)
-             swhid/swhid->string)))
+  (when (holds? repo "HEAD" rel hash)
+    (when-let [changed (origin/git-out repo "--literal-pathspecs" "log" "-1" "--format=%H"
+                                       "HEAD" "--" rel)]
+      (distinct (concat (rev-list repo "--not" (str changed "^@")) [changed])))))
+
+(defn- archived-anchor
+  "The most recent of the `anchor-candidates` the archive holds that
+  holds the object, as a core revision SWHID string, nil when none: HEAD
+  when the archive holds it, else an older commit."
+  [ctx repo rel hash]
+  (some->> (archived-commits ctx (anchor-candidates repo rel hash))
+           (filter #(holds? repo % rel hash))
+           first
+           revision))
+
+(defn- archived-version
+  "The version of the artifact at `rel` the archive holds: that of the
+  most recent of HEAD's last `anchor-candidates-max` commits the archive
+  holds and that has one of the same kind, a directory when `dir?`, as
+  [commit hash]; nil when none."
+  [ctx repo rel dir?]
+  (some #(some->> (object-at repo % rel (if dir? "tree" "blob")) (vector %))
+        (archived-commits ctx (rev-list repo))))
 
 (defn- browse-base
   "Web root of the archive instance `api-opts` points at."
@@ -272,35 +338,45 @@
 
 (defn- qualified-swhid
   "The artifact at `path` as a qualified SWHID (see `qualify`), verified
-  against the archive: its content, and HEAD as anchor only when it
-  holds this content at this path and the archive knows it. A directory
-  in a Git repository stands for its tracked working tree: a 400 when
-  nothing in it is tracked, before the archive is asked."
-  [{:keys [api-opts origin-opts] :as ctx} path lines]
+  against the archive: its content, and as anchor the most recent
+  commit that holds this content at this path and the archive knows
+  (see `archived-anchor`). A directory in a Git repository stands for
+  its tracked working tree: a 400 when nothing in it is tracked, before
+  the archive is asked.
+  With `archived?`, the version the archive holds instead, anchored at
+  its commit and without `lines` (see `archived-version`), with that
+  commit under :version; the working tree's when there is none."
+  [{:keys [api-opts origin-opts] :as ctx} path lines archived?]
   (let [f (scan/normalize path)
         {:keys [dir? repo tracked?] :as artifact} (scan/artifact path)
         _ (when (and dir? repo (not tracked?))
             (fail 400 (str "Nothing is tracked in " f) {:path path}))
         _ (when (and lines dir?)
             (fail 400 "lines apply to a file, not a directory" {:path path}))
-        {:keys [swhid archived]} (lookup! ctx artifact)
-        core (swhid/parse swhid)
         rel (when repo (scan/relpath repo f))
         {:keys [origin visit]} (when repo (origin/lookup repo api-opts origin-opts))
-        anchor (when (and origin (origin/public? origin))
-                 (when-let [rev (head-anchor repo rel (:hash core))]
-                   (when (archived? ctx rev) rev)))
+        public? (and origin (origin/public? origin))
+        [commit hash] (when (and archived? public?) (archived-version ctx repo rel dir?))
+        {:keys [swhid archived]} (if commit
+                                   {:swhid (swhid/swhid->string
+                                            (swhid/make (if dir? :directory :content) hash))
+                                    :archived true}
+                                   (lookup! ctx artifact))
+        core (swhid/parse swhid)
+        anchor (cond commit (revision commit)
+                     public? (archived-anchor ctx repo rel (:hash core)))
         qualified (swhid/swhid->string
                    (qualify core {:origin origin
                                   :snapshot (:snapshot visit)
                                   :anchor anchor
                                   :rel rel
-                                  :lines lines}))]
+                                  :lines (when-not archived? lines)}))]
     (cond-> {:swhid qualified
              :core swhid
              :archived archived
              :browse-url (str (browse-base api-opts) "/" qualified)}
-      origin (assoc :origin origin :origin-archived (some? visit)))))
+      origin (assoc :origin origin :origin-archived (some? visit))
+      commit (assoc :version anchor))))
 
 ;;; Routes
 
@@ -334,7 +410,8 @@
       [:get "/file"]
       (respond 200 (select-keys (lookup! ctx (scan/artifact (path!))) [:swhid :archived]))
       [:get "/swhid"]
-      (respond 200 (qualified-swhid ctx (path!) (parse-lines (get params "lines"))))
+      (respond 200 (qualified-swhid ctx (path!) (parse-lines (get params "lines"))
+                                    (contains? params "archived")))
       [:get "/origin"]
       (let [{:keys [repo origin visit]} (resolve-origin! ctx (path!))
             ;; only an archived origin, hence a public one: the archive

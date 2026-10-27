@@ -622,6 +622,54 @@
                    (:swhid body)))
             (is (false? (:archived body))))
           (git "checkout" "-q" "a.txt"))
+        (testing "an unarchived HEAD: anchored at the most recent archived commit holding the content"
+          (spit b "two\n")
+          (git "commit" "-q" "-am" "two")
+          (let [context (str ";origin=https://example.org/me/repo;visit=swh:1:snp:" snapshot)]
+            (is (= (str (cnt a) context ";anchor=" rev ";path=/a.txt")
+                   (:swhid (second (swhid-of (handler-for #{(cnt a) rev} (fresh-cache) :visit visit) a)))))
+            (testing "nor its ancestors: no anchor"
+              (is (= (str (cnt a) context)
+                     (:swhid (second (swhid-of (handler-for #{(cnt a)} (fresh-cache) :visit visit) a))))))
+            (testing "the archive is asked only about the commits more recent than the first one the cache knows"
+              (let [asked (atom [])
+                    fake (fake-api #{(cnt a)} :visit visit)
+                    c (cache/init (fresh-cache))
+                    handler (daemon/make-handler
+                             {:cache c
+                              :api-opts {:request (fn [{:keys [uri body] :as req}]
+                                                    (when (str/ends-with? uri "/known/")
+                                                      (swap! asked into (json/parse-string body)))
+                                                    (fake req))}})]
+                (cache/add! c #{rev})
+                (is (str/includes? (:swhid (second (swhid-of handler a))) (str ";anchor=" rev)))
+                (is (not-any? #{rev} @asked))))
+            (let [old (cnt a)]
+              (testing "a file changed since: the archived commit does not hold it"
+                (spit a "new\n")
+                (git "commit" "-q" "-am" "three")
+                (is (= (str (cnt a) context)
+                       (:swhid (second (swhid-of (handler-for #{(cnt a) rev} (fresh-cache) :visit visit) a))))))
+              (testing "archived: the version of the archived commit, without lines"
+                (let [archived-of (fn [handler f & [lines]]
+                                    (-> (handler {:request-method :get :uri "/swhid"
+                                                  :query-string (str "path=" (java.net.URLEncoder/encode (str f) "UTF-8")
+                                                                     (when lines (str "&lines=" lines))
+                                                                     "&archived")})
+                                        :body
+                                        (json/parse-string true)))
+                      body (archived-of (handler-for #{rev} (fresh-cache) :visit visit) a "1")]
+                  (is (= (str old context ";anchor=" rev ";path=/a.txt") (:swhid body)))
+                  (is (= old (:core body)))
+                  (is (true? (:archived body)))
+                  (is (= rev (:version body)))
+                  (testing "a directory"
+                    (is (str/starts-with? (:swhid (archived-of (handler-for #{rev} (fresh-cache) :visit visit) sub))
+                                          (str "swh:1:dir:" (str/trim (:out (sh/sh "git" "-C" (str repo) "rev-parse" (str head ":sub"))))))))
+                  (testing "none archived: the working tree's, without lines"
+                    (let [body (archived-of (handler-for #{} (fresh-cache) :visit visit) a "1")]
+                      (is (= (str (cnt a) context) (:swhid body)))
+                      (is (nil? (:version body))))))))))
         (testing "a repository without a remote: no origin qualifiers"
           (git "remote" "remove" "origin")
           (is (= (cnt a) (:swhid (second (swhid-of (handler-for #{} (fresh-cache)) a)))))))

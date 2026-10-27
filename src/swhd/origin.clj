@@ -5,7 +5,7 @@
             [clojure.string :as str]
             [swh.api.v1 :as api]))
 
-(defn- git-out
+(defn git-out
   "Trimmed output of a git command in `path`, nil when it fails or is empty."
   [path & args]
   (let [{:keys [exit out]} (apply sh/sh "git" "-C" (str path) args)]
