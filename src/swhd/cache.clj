@@ -5,11 +5,9 @@
   the qualified SWHID). A new entry is appended, the file is never
   rewritten: the cost of a write does not grow with the cache. Negative
   answers are not persisted."
-  (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
+  (:require [clojure.java.io :as io]
             [clojure.string :as str])
-  (:import (java.io File FileOutputStream IOException RandomAccessFile)
-           (java.nio.file CopyOption Files StandardCopyOption)))
+  (:import (java.io File FileOutputStream IOException RandomAccessFile)))
 
 (defn- cache-file [name]
   (str (or (System/getenv "XDG_CACHE_HOME")
@@ -147,34 +145,9 @@
       (append! cache [(str swhid-str "\t" qualified)])))
   cache)
 
-(defn migrate!
-  "Turn `edn-file`, a cache of swhd 0.1 (an EDN collection), into the
-  line file `file` unless that exists, with `entry->line` for each
-  entry; then remove `edn-file`. An unreadable one is just removed."
-  [edn-file file entry->line]
-  (let [e (io/file edn-file)
-        f (io/file file)]
-    (when (.exists e)
-      (when-not (.exists f)
-        (let [v (try (edn/read-string (slurp e)) (catch Exception _ nil))
-              lines (keep entry->line (when (coll? v) v))
-              tmp (io/file (str f ".tmp"))]
-          ;; all or nothing: a crash leaves the EDN file to convert again
-          (io/make-parents tmp)
-          (spit tmp (str/join (map #(str % "\n") lines)))
-          (Files/move (.toPath tmp) (.toPath f)
-                      (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))))
-      (.delete e))))
-
 (defn init-defaults
-  "The daemon's caches, {:cache :provenance}, in their default files,
-  where those of swhd 0.1 are migrated first; `log` as for `init`."
+  "The daemon's caches, {:cache :provenance}, in their default files;
+  `log` as for `init`."
   [log]
-  (migrate! (cache-file "known.edn") (default-file)
-            #(when (and (string? %) (swhid? %) (writable? %)) %))
-  (migrate! (cache-file "provenance.edn") (default-provenance-file)
-            (fn [[s q]]
-              (when (and (string? s) (string? q) (writable? s q))
-                (str s "\t" q))))
   {:cache (init (default-file) log)
    :provenance (init-provenance (default-provenance-file) log)})

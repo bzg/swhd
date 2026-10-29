@@ -8,8 +8,7 @@ It computes SWHIDs locally, checks them against the archive and caches
 answers in =$XDG_CACHE_HOME/swhd/known.log= (a SWHID is immutable). What
 the archive's provenance API finds is kept in
 =$XDG_CACHE_HOME/swhd/provenance.log=: that call is the costliest.
-Both files are appended to, one entry per line, and never rewritten;
-the =.edn= caches of swhd 0.1 are converted at startup.
+Both files are appended to, one entry per line, and never rewritten.
 
 Inside a Git repository, the SWHIDs are those of the tracked tree:
 untracked and ignored files are left out.

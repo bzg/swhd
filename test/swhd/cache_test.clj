@@ -111,34 +111,3 @@
          (cache/parse-provenance-line "swh:1:cnt:aa\tswh:1:cnt:aa;origin=x")))
   (is (nil? (cache/parse-provenance-line "swh:1:cnt:aa")) "no qualified SWHID")
   (is (nil? (cache/parse-provenance-line "swh:1:cnt:aa\tx\ty")) "too many fields"))
-
-(deftest migrate-test
-  (let [dir (temp-dir "swhd-cache-test")
-        edn (io/file dir "known.edn")
-        log (io/file dir "known.log")
-        pedn (io/file dir "provenance.edn")
-        plog (io/file dir "provenance.log")]
-    (try
-      (spit edn (pr-str #{"swh:1:cnt:aa" "swh:1:dir:bb"}))
-      (cache/migrate! edn log identity)
-      (is (not (.exists edn)) "the EDN file is removed")
-      (is (not (.exists (io/file dir "known.log.tmp"))))
-      (is (= #{"swh:1:cnt:aa" "swh:1:dir:bb"} (:known @(cache/init log))))
-      (testing "an existing line file is kept as is"
-        (spit edn (pr-str #{"swh:1:cnt:cc"}))
-        (cache/migrate! edn log identity)
-        (is (not (.exists edn)))
-        (is (not (cache/known? (cache/init log) "swh:1:cnt:cc"))))
-      (testing "provenance"
-        (spit pedn (pr-str {"swh:1:cnt:aa" "swh:1:cnt:aa;origin=x"}))
-        (cache/migrate! pedn plog (fn [[s q]] (str s "\t" q)))
-        (is (= "swh:1:cnt:aa;origin=x"
-               (cache/provenance (cache/init-provenance plog) "swh:1:cnt:aa"))))
-      (testing "an unreadable EDN file is just removed"
-        (.delete log)
-        (spit edn "#{")
-        (cache/migrate! edn log identity)
-        (is (not (.exists edn)))
-        (is (= #{} (:known @(cache/init log)))))
-      (finally
-        (delete-recursively dir)))))
