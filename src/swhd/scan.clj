@@ -18,6 +18,10 @@
             [swhid.hash :as h])
   (:import (java.nio.file Files LinkOption)))
 
+(def ^:private no-follow
+  "Look at a symbolic link itself, as Git stores it, not at its target."
+  (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+
 (defn- ancestor-dirs
   "Ancestor directories of a relative path: \"a/b/c\" -> (\".\" \"a\" \"a/b\"),
   none for the root \".\"."
@@ -135,9 +139,10 @@
         {:keys [repo nodes rel]} (in-repo f)
         tracked? (contains? nodes rel)]
     {:swhid (cond tracked? (nodes rel)
-                  (and repo (.isFile f)) (swhid/swhid->string (g/blob-swhid repo rel))
+                  (and repo (Files/isRegularFile (.toPath f) no-follow))
+                  (swhid/swhid->string (g/blob-swhid repo rel))
                   :else (swhid/swhid->string (h/path-swhid f exclude-git)))
-     :dir? (Files/isDirectory (.toPath f) (into-array LinkOption [LinkOption/NOFOLLOW_LINKS]))
+     :dir? (Files/isDirectory (.toPath f) no-follow)
      :repo repo
      :tracked? tracked?
      :dirs (when tracked? (map nodes (ancestor-dirs rel)))}))

@@ -132,6 +132,13 @@
         (is (= (swhid/swhid->string (h/content-swhid "a\nb\n"))
                (:swhid (scan/lookup (io/file dir "crlf.txt") (recording-known-fn (atom []) {})
                                     (constantly false))))))
+      (testing "an untracked symbolic link is hashed as its text, not as its target"
+        (let [lnk (io/file dir "lnk")]
+          (java.nio.file.Files/createSymbolicLink (.toPath lnk) (.toPath (io/file "a.txt"))
+                                                  (make-array java.nio.file.attribute.FileAttribute 0))
+          (is (= (swhid/swhid->string (h/content-swhid "a.txt"))
+                 (:swhid (scan/lookup lnk (recording-known-fn (atom []) {}) (constantly false)))))
+          (.delete lnk)))
       (testing "an untracked file is asked for itself only"
         (let [calls (atom [])
               u (io/file dir "untracked.txt")]
