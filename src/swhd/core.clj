@@ -313,12 +313,16 @@
       (distinct (concat (rev-list repo "--not" (str changed "^@")) [changed])))))
 
 (defn- archived-anchor
-  "The most recent of the `anchor-candidates` the archive holds that
-  holds the object, as a core revision SWHID string, nil when none: HEAD
-  when the archive holds it, else an older commit."
+  "The most recent of the `anchor-candidates` that holds the object and
+  the archive holds, as a core revision SWHID string, nil when none:
+  HEAD when the archive holds it, else an older commit. Those that do
+  not hold it are set aside first: `archived-commits` stops asking the
+  archive at the first commit the cache knows, which must then be one
+  that holds it, or an older one holding it would never be asked about."
   [ctx repo rel hash]
-  (some->> (archived-commits ctx (anchor-candidates repo rel hash))
+  (some->> (anchor-candidates repo rel hash)
            (filter #(holds? repo % rel hash))
+           (archived-commits ctx)
            first
            revision))
 

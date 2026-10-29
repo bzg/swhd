@@ -675,6 +675,56 @@
           (is (= (cnt a) (:swhid (second (swhid-of (handler-for #{} (fresh-cache)) a)))))))
       (finally (delete-recursively work)))))
 
+(deftest merged-branch-anchor-test
+  ;; B -> C (adds a.txt), side from B: X (does not touch a.txt), M merges
+  ;; side: X is more recent than C and does not hold a.txt. The archive
+  ;; holds X and C.
+  (let [work (temp-dir "swhd-test")
+        repo (io/file work "repo")
+        git (fn [date & args]
+              (let [{:keys [exit err out]}
+                    (apply sh/sh "git" "-C" (str repo)
+                           "-c" "user.name=Test" "-c" "user.email=test@example.org"
+                           (concat args [:env (assoc (into {} (System/getenv))
+                                                     "GIT_COMMITTER_DATE" (str date " +0000")
+                                                     "GIT_AUTHOR_DATE" (str date " +0000"))]))]
+                (assert (zero? exit) err)
+                (str/trim out)))
+        rev #(str "swh:1:rev:" %)
+        a (io/file repo "a.txt")
+        visit {:date "2026-07-01T03:14:15+00:00" :status "full" :snapshot snapshot}]
+    (try
+      (.mkdir repo)
+      (git 1000000000 "init" "-q" "-b" "main")
+      (git 1000000000 "remote" "add" "origin" "https://example.org/me/repo")
+      (spit (io/file repo "other.txt") "other\n")
+      (git 1000000000 "add" "-A")
+      (git 1000000000 "commit" "-q" "-m" "B")
+      (let [b (git 1000000000 "rev-parse" "HEAD")]
+        (spit a "aaa\n")
+        (git 1000001000 "add" "-A")
+        (git 1000001000 "commit" "-q" "-m" "C")
+        (let [c (git 1000000000 "rev-parse" "HEAD")]
+          (git 1000000000 "checkout" "-q" "-b" "side" b)
+          (spit (io/file repo "other.txt") "edited\n")
+          (git 1000002000 "commit" "-q" "-am" "X")
+          (let [x (git 1000000000 "rev-parse" "HEAD")]
+            (git 1000000000 "checkout" "-q" "main")
+            (git 1000003000 "merge" "-q" "--no-ff" "-m" "M" "side")
+            (let [anchor-of (fn [cache-init]
+                              (let [cache (cache/init (str (io/file work (str (gensym "known") ".log"))))
+                                    handler (daemon/make-handler
+                                             {:cache cache
+                                              :api-opts {:request (fake-api #{(rev x) (rev c)} :visit visit)}})]
+                                (cache/add! cache cache-init)
+                                (re-find #"anchor=[^;]+"
+                                         (:swhid (second (get-json handler :get "/swhid" (str a)))))))]
+              (testing "cold cache: anchored at C, the most recent archived commit holding a.txt"
+                (is (= (str "anchor=" (rev c)) (anchor-of #{}))))
+              (testing "X already in the cache: the same, as X does not hold a.txt"
+                (is (= (str "anchor=" (rev c)) (anchor-of #{(rev x)}))))))))
+      (finally (delete-recursively work)))))
+
 (deftest request-parsing-test
   (testing "query strings"
     (is (= {} (daemon/query-params nil)))
