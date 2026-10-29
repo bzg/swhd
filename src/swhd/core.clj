@@ -18,7 +18,9 @@
                          the archive, with its browse URL; a 400 for a
                          directory where nothing is tracked; with
                          archived, the version the archive holds,
-                         without lines
+                         without lines (the working tree's, with them,
+                         when it holds none; a directory where nothing
+                         is tracked is a 400 only then)
   GET  /origin?path=DIR[&upstream]
                          the repo's origin remote in the archive:
                          archived, date of the last archival; with
@@ -349,18 +351,23 @@
   the archive is asked.
   With `archived?`, the version the archive holds instead, anchored at
   its commit and without `lines` (see `archived-version`), with that
-  commit under :version; the working tree's when there is none."
+  commit under :version; the working tree's, with `lines`, when there
+  is none, and the 400 of a directory where nothing is tracked only
+  then: the archive may hold a version of a directory taken out of the
+  index."
   [{:keys [api-opts origin-opts] :as ctx} path lines archived?]
   (let [f (scan/normalize path)
         {:keys [dir? repo tracked?] :as artifact} (scan/artifact path)
-        _ (when (and dir? repo (not tracked?))
-            (fail 400 (str "Nothing is tracked in " f) {:path path}))
+        nothing-tracked! #(when (and dir? repo (not tracked?))
+                            (fail 400 (str "Nothing is tracked in " f) {:path path}))
+        _ (when-not archived? (nothing-tracked!))
         _ (when (and lines dir?)
             (fail 400 "lines apply to a file, not a directory" {:path path}))
         rel (when repo (scan/relpath repo f))
         {:keys [origin visit]} (when repo (origin/lookup repo api-opts origin-opts))
         public? (and origin (origin/public? origin))
         [commit hash] (when (and archived? public?) (archived-version ctx repo rel dir?))
+        _ (when-not commit (nothing-tracked!))
         {:keys [swhid archived]} (if commit
                                    {:swhid (swhid/swhid->string
                                             (swhid/make (if dir? :directory :content) hash))
@@ -374,7 +381,7 @@
                                   :snapshot (:snapshot visit)
                                   :anchor anchor
                                   :rel rel
-                                  :lines (when-not archived? lines)}))]
+                                  :lines (when-not commit lines)}))]
     (cond-> {:swhid qualified
              :core swhid
              :archived archived

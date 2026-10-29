@@ -141,7 +141,8 @@ working tree: one where nothing is tracked is a 400.
 With =archived=, it is the version the archive holds instead: that of
 the most recent of HEAD's last 100 commits it holds, anchored at that
 commit, which comes as =version=; without lines, as they may not be
-that version's. When the archive holds none, the working tree's.
+that version's. When the archive holds none, the working tree's, with
+the lines; a directory where nothing is tracked is a 400 only then.
 
 The repository's remote is the one its current branch tracks, else
 =origin=, else the only one there is. 

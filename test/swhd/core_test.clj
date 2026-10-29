@@ -664,11 +664,19 @@
                   (is (true? (:archived body)))
                   (is (= rev (:version body)))
                   (testing "a directory"
-                    (is (str/starts-with? (:swhid (archived-of (handler-for #{rev} (fresh-cache) :visit visit) sub))
-                                          (str "swh:1:dir:" (str/trim (:out (sh/sh "git" "-C" (str repo) "rev-parse" (str head ":sub"))))))))
-                  (testing "none archived: the working tree's, without lines"
+                    (let [sub-dir (str "swh:1:dir:" (str/trim (:out (sh/sh "git" "-C" (str repo) "rev-parse" (str head ":sub")))))]
+                      (is (str/starts-with? (:swhid (archived-of (handler-for #{rev} (fresh-cache) :visit visit) sub))
+                                            sub-dir))
+                      (testing "taken out of the index: the archive is asked before the 400"
+                        (git "rm" "-r" "-q" "--cached" "sub")
+                        (is (str/starts-with? (:swhid (archived-of (handler-for #{rev} (fresh-cache) :visit visit) sub))
+                                              sub-dir))
+                        (is (= (str "Nothing is tracked in " sub)
+                               (:error (archived-of (handler-for #{} (fresh-cache) :visit visit) sub))))
+                        (git "add" "sub"))))
+                  (testing "none archived: the working tree's, with lines"
                     (let [body (archived-of (handler-for #{} (fresh-cache) :visit visit) a "1")]
-                      (is (= (str (cnt a) context) (:swhid body)))
+                      (is (= (str (cnt a) context ";lines=1") (:swhid body)))
                       (is (nil? (:version body))))))))))
         (testing "a repository without a remote: no origin qualifiers"
           (git "remote" "remove" "origin")
