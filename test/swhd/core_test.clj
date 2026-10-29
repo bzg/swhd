@@ -494,7 +494,10 @@
           (is (= 200 (ping nil)) "not from a browser")
           (is (= 403 (ping {"host" "evil.example:8642"})) "DNS rebinding")
           (is (= 403 (ping {"host" "127.0.0.1:8642" "origin" "https://evil.example"}))
-              "cross-origin request")))
+              "cross-origin request")
+          (is (= 403 (:status (handler {:request-method :get :uri "/ping" :query-string "path=%zz"
+                                        :headers {"host" "evil.example:8642"}})))
+              "before the query string is looked at")))
       (finally (delete-recursively work)))))
 
 (deftest swhid-route-test

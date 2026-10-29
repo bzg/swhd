@@ -402,7 +402,7 @@
 (defn- route
   "Response for `request` with its query `params`."
   [{:keys [cache known-fn api-opts origin-opts authenticated] :as ctx}
-   {:keys [request-method uri headers]} params]
+   {:keys [request-method uri]} params]
   (let [path (get params "path")
         ;; Every route but /ping needs an existing path: 400 otherwise.
         path! (fn []
@@ -411,8 +411,6 @@
                   (fail 400 "No such path" {:path path}))
                 path)
         dir! #(directory! (path!))]
-    (when-not (local-request? headers)
-      (fail 403 "Forbidden: not a local request"))
     (case [request-method uri]
       [:get "/ping"]
       (respond 200 {:pong true :version version :authenticated authenticated})
@@ -434,10 +432,11 @@
                        upstream (assoc :upstream upstream
                                        :upstream-archived (archived? ctx upstream)))))
       [:get "/visits"]
-      (let [{:keys [origin visit]} (resolve-origin! ctx (path!))
-            n (if-let [raw (get params "n")] (parse-long raw) 10)]
-        (when-not (pos-int? n)
-          (fail 400 "Invalid n parameter" {:n (get params "n")}))
+      ;; n first: resolving the origin may ask the archive
+      (let [n (if-let [raw (get params "n")] (parse-long raw) 10)
+            _ (when-not (pos-int? n)
+                (fail 400 "Invalid n parameter" {:n (get params "n")}))
+            {:keys [origin visit]} (resolve-origin! ctx (path!))]
         (respond 200 {:origin origin
                       :visits (if visit
                                 (api/visits origin (assoc api-opts :per-page n))
@@ -491,7 +490,9 @@
             token (bearer-token headers)
             params (query-params query-string)
             {:keys [status body]}
-            (try (route (if token (ctx-for (assoc api-opts :token token)) ctx)
+            (try (when-not (local-request? headers)
+                   (fail 403 "Forbidden: not a local request"))
+                 (route (if token (ctx-for (assoc api-opts :token token)) ctx)
                         req
                         (or params (fail 400 "Malformed query string" {:query query-string})))
                  (catch Exception e (error-response e)))
