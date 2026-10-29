@@ -222,13 +222,16 @@
   [{:keys [cache known-fn]} s]
   (boolean (or (cache/known? cache s) (get (known-fn [s]) s))))
 
+(defn- revision
+  "The commit hash `commit` as a core revision SWHID string."
+  [commit]
+  (swhid/swhid->string (swhid/make :revision commit)))
+
 (defn- upstream-revision
   "The upstream of `repo`'s current branch as a core revision SWHID
   string, see swhd.origin/upstream-commit."
   [repo]
-  (some->> (origin/upstream-commit repo)
-           (swhid/make :revision)
-           swhid/swhid->string))
+  (some-> (origin/upstream-commit repo) revision))
 
 ;;; Qualified SWHIDs
 
@@ -285,11 +288,6 @@
   `rel`."
   [repo commit rel hash]
   (= hash (object-at repo commit rel)))
-
-(defn- revision
-  "The commit hash `commit` as a core revision SWHID string."
-  [commit]
-  (swhid/swhid->string (swhid/make :revision commit)))
 
 (defn- archived-commits
   "Those of `commits` (hashes, most recent first) the archive holds,

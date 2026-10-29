@@ -35,7 +35,9 @@
       [s q])))
 
 (defn- writable?
-  "Whether the strings fit on a line of their own, a tab apart."
+  "Whether the strings fit on a line of their own, a tab apart. SWHIDs
+  always do (swhid-clj or the archive validated them); a provenance
+  the archive gives is checked."
   [& ss]
   (not-any? #(re-find #"[\t\r\n]" %) ss))
 
@@ -99,24 +101,26 @@
           (catch IOException e
             (log (str "cache: cannot write " file ": " (ex-message e)))))))))
 
+(defn- init*
+  "A cache backed by `file` (nil: in memory only), loaded with
+  `parse-line` into the empty collection `empty`."
+  [file parse-line empty log]
+  (let [log (or log (fn [_]))]
+    (atom {:file (io/file file) :log log
+           :known (load! file parse-line empty log)})))
+
 (defn init
   "Cache of archived SWHIDs backed by `file`, one SWHID per line. `log`,
   when given, receives a line about each file that cannot be written."
   ([file] (init file nil))
-  ([file log]
-   (let [log (or log (fn [_]))]
-     (atom {:file (io/file file) :log log
-            :known (load! file parse-known-line #{} log)}))))
+  ([file log] (init* file parse-known-line #{} log)))
 
 (defn init-provenance
   "Provenance cache backed by `file`, one SWHID and the qualified SWHID
   the archive found for it per line (the last line about a SWHID
   wins); in memory when `file` is nil. `log` as for `init`."
   ([file] (init-provenance file nil))
-  ([file log]
-   (let [log (or log (fn [_]))]
-     (atom {:file (some-> file io/file) :log log
-            :known (load! file parse-provenance-line {} log)}))))
+  ([file log] (init* file parse-provenance-line {} log)))
 
 (defn known? [cache swhid-str]
   (contains? (:known @cache) swhid-str))
@@ -132,7 +136,7 @@
   (when (seq swhids)
     (let [[old _] (swap-vals! cache update :known into swhids)]
       ;; seq: distinct destructures its argument, which a set cannot be
-      (append! cache (filter writable? (remove (:known old) (distinct (seq swhids)))))))
+      (append! cache (remove (:known old) (distinct (seq swhids))))))
   cache)
 
 (defn add-provenance!
