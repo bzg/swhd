@@ -816,3 +816,94 @@
           (git "config" "branch.main.merge" "refs/heads/main")
           (is (= {} (upstream-of #{pushed} :visit visit)))))
       (finally (delete-recursively work)))))
+
+(deftest edge-paths-test
+  (let [work (temp-dir "swhd-test")
+        repo (io/file work "repo")
+        other (io/file work "other")
+        git (fn [dir & args]
+              (let [{:keys [exit err]}
+                    (apply sh/sh "git" "-C" (str dir)
+                           "-c" "user.name=Test" "-c" "user.email=test@example.org" args)]
+                (assert (zero? exit) err)))
+        link (fn [from to]
+               (java.nio.file.Files/createSymbolicLink
+                (.toPath from) (.toPath (io/file to))
+                (make-array java.nio.file.attribute.FileAttribute 0)))
+        lines (atom [])
+        handler (daemon/make-handler {:cache (cache/init (str (io/file work "known.log")))
+                                      :api-opts {:request (fake-api #{})}
+                                      :log #(swap! lines conj %)})
+        dangling (io/file repo "dangling")
+        vendor (io/file repo "vendor")]
+    (try
+      (.mkdir repo)
+      (.mkdir other)
+      (git repo "init" "-q" "-b" "main")
+      (git other "init" "-q" "-b" "main")
+      (spit (io/file other "o.txt") "o\n")
+      (git other "add" "-A")
+      (git other "commit" "-q" "-m" "o")
+      (link dangling "nowhere")
+      (link vendor "../other")
+      (git repo "add" "-A")
+      (git repo "commit" "-q" "-m" "links")
+      (testing "a dangling symbolic link is there, as Git stores it"
+        (let [[status body] (get-json handler :get "/file" (str dangling))]
+          (is (= 200 status))
+          (is (str/starts-with? (:swhid body) "swh:1:cnt:"))))
+      (testing "a link to another repository is a link of this one"
+        (is (str/starts-with? (:swhid (second (get-json handler :get "/file" (str vendor))))
+                              "swh:1:cnt:")))
+      (testing "an empty or unnameable path is a 400"
+        (is (= [400 {:error "Missing path parameter"}] (get-json handler :get "/tree" "")))
+        (is (= [400 {:error "No such path"}] (get-json handler :get "/file" "a\u0000b"))))
+      (testing "a request is one line of log, whatever its path"
+        (reset! lines [])
+        (get-json handler :get "/file" "x\nGET /forged")
+        (is (= 1 (count @lines)))
+        (is (not (str/includes? (first @lines) "\n"))))
+      (finally (delete-recursively work)))))
+
+(deftest archived-version-cache-test
+  ;; B adds a.txt, C deletes it, D adds it back. The archive holds B and
+  ;; C, and the cache knows C, which has no a.txt.
+  (let [work (temp-dir "swhd-test")
+        repo (io/file work "repo")
+        git (fn [& args]
+              (let [{:keys [exit err out]}
+                    (apply sh/sh "git" "-C" (str repo)
+                           "-c" "user.name=Test" "-c" "user.email=test@example.org" args)]
+                (assert (zero? exit) err)
+                (str/trim out)))
+        a (io/file repo "a.txt")
+        rev #(str "swh:1:rev:" (git "rev-parse" %))
+        visit {:date "2026-07-01T03:14:15+00:00" :status "full"
+               :snapshot "0000000000000000000000000000000000000000"}]
+    (try
+      (.mkdir repo)
+      (git "init" "-q" "-b" "main")
+      (git "remote" "add" "origin" "https://example.org/me/repo")
+      (spit a "old\n")
+      (git "add" "-A")
+      (git "commit" "-q" "-m" "B")
+      (spit (io/file repo "other.txt") "other\n")
+      (git "rm" "-q" "a.txt")
+      (git "add" "-A")
+      (git "commit" "-q" "-m" "C")
+      (spit a "new\n")
+      (git "add" "-A")
+      (git "commit" "-q" "-m" "D")
+      (let [b (rev "HEAD~2")
+            c (rev "HEAD~1")
+            cache (cache/init (str (io/file work "known.log")))
+            handler (daemon/make-handler
+                     {:cache cache
+                      :api-opts {:request (fake-api #{b c} :visit visit)}})]
+        (cache/add! cache #{c})
+        (is (= b (:version (json/parse-string
+                            (:body (handler {:request-method :get :uri "/swhid"
+                                             :query-string (str "archived&path="
+                                                                (java.net.URLEncoder/encode (str a) "UTF-8"))}))
+                            true)))))
+      (finally (delete-recursively work)))))

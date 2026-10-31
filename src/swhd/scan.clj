@@ -2,7 +2,7 @@
   "Scan a directory: SWHIDs from swhid-clj, archival status from a
   `known-fn`, with Merkle pruning -- directories are queried first, and
   everything under an archived directory is archived without further
-  API calls. `lookup` applies the same pruning to a single artifact.
+  API calls. `status` applies the same pruning to a single artifact.
 
   Inside a Git repository, the SWHIDs are those of the tracked working
   tree (swhid.git/worktree-swhids): untracked and ignored files are left
@@ -45,11 +45,19 @@
   ^java.io.File [path]
   (-> (io/file path) .toPath .toAbsolutePath .normalize .toFile))
 
+(defn exists?
+  "True when there is something at `path`, a dangling symbolic link
+  included; false for a path the system cannot name."
+  [path]
+  (try (Files/exists (.toPath (normalize path)) no-follow)
+       (catch IllegalArgumentException _ false)))
+
 (defn repo-root
-  "Nearest directory at or above `f` holding a \".git\" entry, or nil."
+  "Nearest directory at or above `f` holding a \".git\" entry, or nil.
+  A symbolic link is not a directory, whatever it points at."
   [^java.io.File f]
   (->> (iterate #(.getParentFile ^java.io.File %)
-                (if (.isDirectory f) f (.getParentFile f)))
+                (if (Files/isDirectory (.toPath f) no-follow) f (.getParentFile f)))
        (take-while some?)
        (filter #(.exists (io/file % ".git")))
        first))
@@ -166,9 +174,3 @@
       {:swhid s
        :archived archived
        :newly-known (if archived (conj found s) #{})})))
-
-(defn lookup
-  "Archival status of the single artifact at `path`: `status` of its
-  `artifact`."
-  [path known-fn known?]
-  (status (artifact path) known-fn known?))

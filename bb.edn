@@ -10,8 +10,9 @@
    :extra-paths ["test"]
    :requires ([clojure.test :as t])
    :task (do
-           (require 'swhd.cache-test 'swhd.origin-test 'swhd.scan-test 'swhd.core-test)
+           (require 'swhd.cache-test 'swhd.git-test 'swhd.origin-test
+                    'swhd.scan-test 'swhd.core-test)
            (let [{:keys [fail error]}
-                 (t/run-tests 'swhd.cache-test 'swhd.origin-test
+                 (t/run-tests 'swhd.cache-test 'swhd.git-test 'swhd.origin-test
                               'swhd.scan-test 'swhd.core-test)]
              (System/exit (if (pos? (+ fail error)) 1 0))))}}}

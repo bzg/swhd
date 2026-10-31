@@ -8,6 +8,12 @@
             [swhid.core :as swhid]
             [swhid.hash :as h]))
 
+(defn- lookup
+  "Archival status of the single artifact at `path`: swhd.scan/status of
+  its artifact."
+  [path known-fn known?]
+  (scan/status (scan/artifact path) known-fn known?))
+
 (defn- make-fixture []
   (let [dir (temp-dir "swhd-scan-test")]
     (spit (io/file dir "a.txt") "aaa\n")
@@ -130,27 +136,27 @@
         (git! dir "add" ".gitattributes")
         (spit (io/file dir "crlf.txt") "a\r\nb\r\n")
         (is (= (swhid/swhid->string (h/content-swhid "a\nb\n"))
-               (:swhid (scan/lookup (io/file dir "crlf.txt") (recording-known-fn (atom []) {})
-                                    (constantly false))))))
+               (:swhid (lookup (io/file dir "crlf.txt") (recording-known-fn (atom []) {})
+                               (constantly false))))))
       (testing "an untracked symbolic link is hashed as its text, not as its target"
         (let [lnk (io/file dir "lnk")]
           (java.nio.file.Files/createSymbolicLink (.toPath lnk) (.toPath (io/file "a.txt"))
                                                   (make-array java.nio.file.attribute.FileAttribute 0))
           (is (= (swhid/swhid->string (h/content-swhid "a.txt"))
-                 (:swhid (scan/lookup lnk (recording-known-fn (atom []) {}) (constantly false)))))
+                 (:swhid (lookup lnk (recording-known-fn (atom []) {}) (constantly false)))))
           (.delete lnk)))
       (testing "an untracked file is asked for itself only"
         (let [calls (atom [])
               u (io/file dir "untracked.txt")]
-          (is (false? (:archived (scan/lookup u (recording-known-fn calls {})
-                                              (constantly false)))))
+          (is (false? (:archived (lookup u (recording-known-fn calls {})
+                                         (constantly false)))))
           (is (= [#{(swhid-of u)}] @calls))))
       (testing "a modified tracked file is hashed from the working tree"
         (spit (io/file dir "a.txt") "changed\n")
         (let [calls (atom [])
               a (io/file dir "a.txt")]
           (is (= (swhid-of a)
-                 (:swhid (scan/lookup a (recording-known-fn calls {}) (constantly false)))))
+                 (:swhid (lookup a (recording-known-fn calls {}) (constantly false)))))
           (is (= (swhid-of a)
                  (get-in (scan/scan dir (recording-known-fn (atom []) {}) (constantly false))
                          ["a.txt" :swhid])))))
@@ -169,26 +175,26 @@
       (testing "cached ancestor => zero API call, the file joins the cache"
         (let [calls (atom [])]
           (is (= {:swhid b-swhid :archived true :newly-known #{b-swhid}}
-                 (scan/lookup b (recording-known-fn calls {}) #(= % root-swhid))))
+                 (lookup b (recording-known-fn calls {}) #(= % root-swhid))))
           (is (empty? @calls))))
       (testing "cached file => nothing new"
         (let [calls (atom [])]
           (is (= {:swhid b-swhid :archived true :newly-known #{}}
-                 (scan/lookup b (recording-known-fn calls {}) #(= % b-swhid))))
+                 (lookup b (recording-known-fn calls {}) #(= % b-swhid))))
           (is (empty? @calls))))
       (testing "nothing cached => one call for the file and its ancestors"
         (let [calls (atom [])]
           (is (= {:swhid b-swhid :archived true :newly-known #{b-swhid sub-swhid}}
-                 (scan/lookup b (recording-known-fn calls {sub-swhid true})
-                              (constantly false))))
+                 (lookup b (recording-known-fn calls {sub-swhid true})
+                         (constantly false))))
           (is (= [#{b-swhid sub-swhid root-swhid}] @calls))))
       (testing "nothing archived"
         (is (= {:swhid b-swhid :archived false :newly-known #{}}
-               (scan/lookup b (recording-known-fn (atom []) {}) (constantly false)))))
+               (lookup b (recording-known-fn (atom []) {}) (constantly false)))))
       (testing "the repo root has no ancestor and matches the scan"
         (let [calls (atom [])]
-          (is (= root-swhid (:swhid (scan/lookup dir (recording-known-fn calls {})
-                                                 (constantly false)))))
+          (is (= root-swhid (:swhid (lookup dir (recording-known-fn calls {})
+                                            (constantly false)))))
           (is (= [#{root-swhid}] @calls))))
       (finally (delete-recursively dir)))))
 
@@ -198,8 +204,8 @@
     (try
       (testing "no repository root => only the artifact itself is asked"
         (let [calls (atom [])]
-          (is (false? (:archived (scan/lookup b (recording-known-fn calls {})
-                                              (constantly false)))))
+          (is (false? (:archived (lookup b (recording-known-fn calls {})
+                                         (constantly false)))))
           (is (= [#{(swhid-of b)}] @calls))))
       (finally (delete-recursively dir)))))
 

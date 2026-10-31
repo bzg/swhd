@@ -1,44 +1,9 @@
 (ns swhd.origin
   "A repository's origin as the archive knows it: which remote, in which
   form, and its latest archival visit."
-  (:require [clojure.java.shell :as sh]
-            [clojure.string :as str]
-            [swh.api.v1 :as api]))
-
-(defn git-out
-  "Trimmed output of a git command in `path`, nil when it fails or is empty."
-  [path & args]
-  (let [{:keys [exit out]} (apply sh/sh "git" "-C" (str path) args)]
-    (when (zero? exit) (not-empty (str/trim out)))))
-
-(defn pick-remote
-  "Name of the remote to use among the set `remotes`: `tracked` (the
-  current branch's, \".\" meaning the repository itself), else
-  \"origin\", else the only one there is. nil when none fits."
-  [tracked remotes]
-  (or (when (and tracked (not= "." tracked)) tracked)
-      (remotes "origin")
-      (when (= 1 (count remotes)) (first remotes))))
-
-(defn remote-url
-  "URL of the repository's remote (see `pick-remote`), nil without one."
-  [path]
-  (let [branch (git-out path "symbolic-ref" "--short" "-q" "HEAD")
-        tracked (when branch
-                  (git-out path "config" "--get" (str "branch." branch ".remote")))
-        remotes (set (some-> (git-out path "remote") str/split-lines))]
-    (some->> (pick-remote tracked remotes)
-             (git-out path "remote" "get-url"))))
-
-(defn upstream-commit
-  "Hash of the commit the upstream of the repository's current branch
-  points at, as of the last fetch: what its remote holds, whatever is
-  committed but not pushed yet. nil without an upstream, or when it is
-  a local branch."
-  [path]
-  (when (some-> (git-out path "rev-parse" "--symbolic-full-name" "@{upstream}")
-                (str/starts-with? "refs/remotes/"))
-    (git-out path "rev-parse" "--verify" "-q" "@{upstream}^{commit}")))
+  (:require [clojure.string :as str]
+            [swh.api.v1 :as api]
+            [swhd.git :as git]))
 
 (defn normalize
   "The archive's form of a Git remote URL: https, no user, no trailing
@@ -104,7 +69,7 @@
   `ttl-ms` (default-ttl-ms), the answer kept in `cache` ({url {:value
   answer :at epoch-ms}}), and `log` is told when it is asked."
   [path api-opts {:keys [cache ttl-ms log] :or {ttl-ms default-ttl-ms}}]
-  (when-let [remote (remote-url path)]
+  (when-let [remote (git/remote-url path)]
     (let [url (normalize remote)
           now (System/currentTimeMillis)]
       (or (fresh (get @cache url) now ttl-ms)

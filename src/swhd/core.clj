@@ -43,6 +43,7 @@
             [org.httpkit.server :as srv]
             [swh.api.v1 :as api]
             [swhd.cache :as cache]
+            [swhd.git :as git]
             [swhd.origin :as origin]
             [swhd.scan :as scan]
             [swhid.core :as swhid]
@@ -229,9 +230,9 @@
 
 (defn- upstream-revision
   "The upstream of `repo`'s current branch as a core revision SWHID
-  string, see swhd.origin/upstream-commit."
+  string, see swhd.git/upstream-commit."
   [repo]
-  (some-> (origin/upstream-commit repo) revision))
+  (some-> (git/upstream-commit repo) revision))
 
 ;;; Qualified SWHIDs
 
@@ -265,29 +266,11 @@
   them, only the commit that last changed the artifact may."
   100)
 
-(defn- object-at
-  "Hash of the object at `rel` (\".\" for the root directory) in
-  `commit` of `repo`, of `type` (\"blob\" or \"tree\") when given; nil
-  when it has none."
-  [repo commit rel & [type]]
-  (when-let [hash (origin/git-out repo "rev-parse" "--verify" "-q"
-                                  (if (= rel ".") (str commit "^{tree}") (str commit ":" rel)))]
-    (when (or (nil? type) (= type (origin/git-out repo "cat-file" "-t" hash)))
-      hash)))
-
-(defn- rev-list
-  "Hashes of HEAD's last `anchor-candidates-max` commits in `repo`, most
-  recent first, with the git rev-list `args` after HEAD."
-  [repo & args]
-  (some-> (apply origin/git-out repo "rev-list" (str "--max-count=" anchor-candidates-max)
-                 "HEAD" args)
-          str/split-lines))
-
 (defn- holds?
   "True when `commit` of `repo` holds the object whose `hash` is given at
   `rel`."
   [repo commit rel hash]
-  (= hash (object-at repo commit rel)))
+  (= hash (git/object-at repo commit rel)))
 
 (defn- archived-commits
   "Those of `commits` (hashes, most recent first) the archive holds,
@@ -308,9 +291,9 @@
   HEAD does not hold it (an edited or untracked file is not in it)."
   [repo rel hash]
   (when (holds? repo "HEAD" rel hash)
-    (when-let [changed (origin/git-out repo "--literal-pathspecs" "log" "-1" "--format=%H"
-                                       "HEAD" "--" rel)]
-      (distinct (concat (rev-list repo "--not" (str changed "^@")) [changed])))))
+    (when-let [changed (git/last-change repo rel)]
+      (distinct (concat (git/rev-list repo anchor-candidates-max "--not" (str changed "^@"))
+                        [changed])))))
 
 (defn- archived-anchor
   "The most recent of the `anchor-candidates` that holds the object and
@@ -330,23 +313,35 @@
   "The version of the artifact at `rel` the archive holds: that of the
   most recent of HEAD's last `anchor-candidates-max` commits the archive
   holds and that has one of the same kind, a directory when `dir?`, as
-  [commit hash]; nil when none."
+  [commit hash]; nil when none. Those without one are set aside first,
+  for the reason `archived-anchor` tells."
   [ctx repo rel dir?]
-  (some #(some->> (object-at repo % rel (if dir? "tree" "blob")) (vector %))
-        (archived-commits ctx (rev-list repo))))
+  (let [commits (git/rev-list repo anchor-candidates-max)
+        versions (zipmap commits
+                         (map #(git/object-at repo % rel (if dir? "tree" "blob")) commits))]
+    (when-let [commit (first (archived-commits ctx (filter versions commits)))]
+      [commit (versions commit)])))
 
 (defn- browse-base
   "Web root of the archive instance `api-opts` points at."
   [api-opts]
   (str/replace (or (:base-url api-opts) api/default-base-url) #"/api/1/?$" ""))
 
+(defn- nothing-tracked!
+  "A 400 when the `artifact` at `path` is a directory of a Git
+  repository where nothing is tracked: it stands for its tracked
+  working tree, which is then empty."
+  [{:keys [dir? repo tracked?]} path]
+  (when (and dir? repo (not tracked?))
+    (fail 400 (str "Nothing is tracked in " (scan/normalize path)) {:path path})))
+
 (defn- qualified-swhid
-  "The artifact at `path` as a qualified SWHID (see `qualify`), verified
-  against the archive: its content, and as anchor the most recent
-  commit that holds this content at this path and the archive knows
-  (see `archived-anchor`). A directory in a Git repository stands for
-  its tracked working tree: a 400 when nothing in it is tracked, before
-  the archive is asked.
+  "The artifact at `path` as a qualified SWHID (see `qualify`),
+  verified against the archive: its content, and as anchor the most
+  recent commit that holds this content at this path and the archive
+  knows (see `archived-anchor`). A 400 when nothing is tracked in a
+  directory of a repository (see `nothing-tracked!`), before the
+  archive is asked.
   With `archived?`, the version the archive holds instead, anchored at
   its commit and without `lines` (see `archived-version`), with that
   commit under :version; the working tree's, with `lines`, when there
@@ -354,18 +349,15 @@
   then: the archive may hold a version of a directory taken out of the
   index."
   [{:keys [api-opts origin-opts] :as ctx} path lines archived?]
-  (let [f (scan/normalize path)
-        {:keys [dir? repo tracked?] :as artifact} (scan/artifact path)
-        nothing-tracked! #(when (and dir? repo (not tracked?))
-                            (fail 400 (str "Nothing is tracked in " f) {:path path}))
-        _ (when-not archived? (nothing-tracked!))
+  (let [{:keys [dir? repo] :as artifact} (scan/artifact path)
+        _ (when-not archived? (nothing-tracked! artifact path))
         _ (when (and lines dir?)
             (fail 400 "lines apply to a file, not a directory" {:path path}))
-        rel (when repo (scan/relpath repo f))
+        rel (when repo (scan/relpath repo (scan/normalize path)))
         {:keys [origin visit]} (when repo (origin/lookup repo api-opts origin-opts))
         public? (and origin (origin/public? origin))
         [commit hash] (when (and archived? public?) (archived-version ctx repo rel dir?))
-        _ (when-not commit (nothing-tracked!))
+        _ (when-not commit (nothing-tracked! artifact path))
         {:keys [swhid archived]} (if commit
                                    {:swhid (swhid/swhid->string
                                             (swhid/make (if dir? :directory :content) hash))
@@ -388,6 +380,19 @@
       commit (assoc :version anchor))))
 
 ;;; Routes
+;;
+;; A route takes the context and the query params and answers with
+;; `respond`; `routes` maps [method uri] to it.
+
+(defn- path!
+  "The \"path\" of `params`, which every route but /ping needs, and must
+  exist: a 400 otherwise."
+  [params]
+  (let [path (get params "path")]
+    (when (empty? path) (fail 400 "Missing path parameter"))
+    (when-not (scan/exists? path)
+      (fail 400 "No such path" {:path path}))
+    path))
 
 (defn- directory!
   "`path` as a normalized directory, a 400 otherwise."
@@ -397,61 +402,96 @@
       (fail 400 "Not a directory" {:path path}))
     f))
 
+(defn- get-ping [{:keys [authenticated]} _]
+  (respond 200 {:pong true :version version :authenticated authenticated}))
+
+(defn- get-tree [{:keys [cache known-fn] :as ctx} params]
+  (respond 200 (with-provenances ctx (scan/scan (directory! (path! params))
+                                                known-fn #(cache/known? cache %)))))
+
+(defn- get-file [ctx params]
+  (respond 200 (select-keys (lookup! ctx (scan/artifact (path! params))) [:swhid :archived])))
+
+(defn- get-swhid [ctx params]
+  (respond 200 (qualified-swhid ctx (path! params) (parse-lines (get params "lines"))
+                                (contains? params "archived"))))
+
+(defn- get-origin [ctx params]
+  (let [{:keys [repo origin visit]} (resolve-origin! ctx (path! params))
+        ;; only an archived origin, hence a public one: the archive
+        ;; is not told about the commits of a private repo
+        upstream (when (and (contains? params "upstream") visit)
+                   (upstream-revision repo))]
+    (respond 200 (cond-> (merge {:origin origin :archived (some? visit)}
+                                (select-keys visit [:date :status :snapshot]))
+                   upstream (assoc :upstream upstream
+                                   :upstream-archived (archived? ctx upstream))))))
+
+(defn- get-visits [{:keys [api-opts] :as ctx} params]
+  ;; n first: resolving the origin may ask the archive
+  (let [n (if-let [raw (get params "n")] (parse-long raw) 10)
+        _ (when-not (pos-int? n)
+            (fail 400 "Invalid n parameter" {:n (get params "n")}))
+        {:keys [origin visit]} (resolve-origin! ctx (path! params))]
+    (respond 200 {:origin origin
+                  :visits (if visit
+                            (api/visits origin (assoc api-opts :per-page n))
+                            [])})))
+
+(defn- get-provenance [ctx params]
+  (let [s (core-swhid! (get params "swhid"))]
+    (respond 200 {:swhid s :provenance (provenance! ctx s)})))
+
+(defn- post-save [{:keys [api-opts origin-opts] :as ctx} params]
+  ;; save under the URL the archive already knows, if any
+  (let [{:keys [origin]} (resolve-origin! ctx (path! params))]
+    (when-not (origin/public? origin)
+      (fail 400 "The origin is not a public URL" {:origin origin}))
+    (let [saved (api/save-code-now! origin api-opts)]
+      ;; the archive's answer about this origin is about to change
+      (origin/forget! (:cache origin-opts) origin)
+      (respond 200 (assoc saved :origin origin)))))
+
+(def ^:private routes
+  "[method uri] -> the route answering it, see the namespace's doc."
+  {[:get "/ping"] get-ping
+   [:get "/tree"] get-tree
+   [:get "/file"] get-file
+   [:get "/swhid"] get-swhid
+   [:get "/origin"] get-origin
+   [:get "/visits"] get-visits
+   [:get "/provenance"] get-provenance
+   [:post "/save"] post-save})
+
 (defn- route
-  "Response for `request` with its query `params`."
-  [{:keys [cache known-fn api-opts origin-opts authenticated] :as ctx}
-   {:keys [request-method uri]} params]
-  (let [path (get params "path")
-        ;; Every route but /ping needs an existing path: 400 otherwise.
-        path! (fn []
-                (when-not path (fail 400 "Missing path parameter"))
-                (when-not (.exists (scan/normalize path))
-                  (fail 400 "No such path" {:path path}))
-                path)
-        dir! #(directory! (path!))]
-    (case [request-method uri]
-      [:get "/ping"]
-      (respond 200 {:pong true :version version :authenticated authenticated})
-      [:get "/tree"]
-      (respond 200 (with-provenances ctx (scan/scan (dir!) known-fn #(cache/known? cache %))))
-      [:get "/file"]
-      (respond 200 (select-keys (lookup! ctx (scan/artifact (path!))) [:swhid :archived]))
-      [:get "/swhid"]
-      (respond 200 (qualified-swhid ctx (path!) (parse-lines (get params "lines"))
-                                    (contains? params "archived")))
-      [:get "/origin"]
-      (let [{:keys [repo origin visit]} (resolve-origin! ctx (path!))
-            ;; only an archived origin, hence a public one: the archive
-            ;; is not told about the commits of a private repo
-            upstream (when (and (contains? params "upstream") visit)
-                       (upstream-revision repo))]
-        (respond 200 (cond-> (merge {:origin origin :archived (some? visit)}
-                                    (select-keys visit [:date :status :snapshot]))
-                       upstream (assoc :upstream upstream
-                                       :upstream-archived (archived? ctx upstream)))))
-      [:get "/visits"]
-      ;; n first: resolving the origin may ask the archive
-      (let [n (if-let [raw (get params "n")] (parse-long raw) 10)
-            _ (when-not (pos-int? n)
-                (fail 400 "Invalid n parameter" {:n (get params "n")}))
-            {:keys [origin visit]} (resolve-origin! ctx (path!))]
-        (respond 200 {:origin origin
-                      :visits (if visit
-                                (api/visits origin (assoc api-opts :per-page n))
-                                [])}))
-      [:get "/provenance"]
-      (let [s (core-swhid! (get params "swhid"))]
-        (respond 200 {:swhid s :provenance (provenance! ctx s)}))
-      [:post "/save"]
-      ;; save under the URL the archive already knows, if any
-      (let [{:keys [origin]} (resolve-origin! ctx (path!))]
-        (when-not (origin/public? origin)
-          (fail 400 "The origin is not a public URL" {:origin origin}))
-        (let [saved (api/save-code-now! origin api-opts)]
-          ;; the archive's answer about this origin is about to change
-          (origin/forget! (:cache origin-opts) origin)
-          (respond 200 (assoc saved :origin origin))))
-      (respond 404 {:error "not found"}))))
+  "Response for `request` with its query `params`: a 404 off `routes`."
+  [ctx {:keys [request-method uri]} params]
+  (if-let [answer (routes [request-method uri])]
+    (answer ctx params)
+    (respond 404 {:error "not found"})))
+
+(defn- handle
+  "The {:status :body} answer to `req` with `params`, its decoded query
+  string (nil when malformed): a 403 off localhost, else the route's
+  answer, or the error it threw, see `error-response`. `ctx-for` gives
+  the context for the token the request brings, if any."
+  [ctx-for {:keys [headers query-string] :as req} params]
+  (try (when-not (local-request? headers)
+         (fail 403 "Forbidden: not a local request"))
+       (route (ctx-for (bearer-token headers)) req
+              (or params (fail 400 "Malformed query string" {:query query-string})))
+       (catch Exception e (error-response e))))
+
+(defn- log-request!
+  "One line to `log` about `req` with `params`, answered `status` and
+  `body` in `ms`: method, route, path, status, duration, error. One
+  whatever the request says: a decoded newline would forge another."
+  [log {:keys [request-method uri]} params status body ms]
+  (log (str/replace (str (str/upper-case (name request-method)) " " uri
+                         (when-let [p (get params "path")] (str " path=" p))
+                         " -> " status " (" ms " ms)"
+                         (when (>= status 400) (str ": " (:error body))))
+                    #"\p{Cntrl}" " ")))
 
 (defn make-handler
   "Ring-style handler. `api-opts` is passed to swh.api.v1 calls, with
@@ -465,40 +505,31 @@
   default."
   [{:keys [cache provenance api-opts log origin-ttl-ms]}]
   (let [log (or log (fn [_]))
+        ttl-ms (or origin-ttl-ms origin/default-ttl-ms)
         visits (atom {})
         provenance (or provenance (cache/init-provenance nil))
         misses (atom {})
         ;; the daemon's own token, which clients without one rely on
         authenticated (some? (:token api-opts))
-        ctx-for (fn [api-opts]
-                  {:cache cache
-                   :authenticated authenticated
-                   :provenance provenance
-                   :misses misses
-                   :ttl-ms (or origin-ttl-ms origin/default-ttl-ms)
-                   :log log
-                   :api-opts api-opts
-                   :known-fn (known-fn cache api-opts log)
-                   :origin-opts (cond-> {:cache visits :log log}
-                                  origin-ttl-ms (assoc :ttl-ms origin-ttl-ms))})
-        ctx (ctx-for api-opts)]
-    (fn [{:keys [request-method uri query-string headers] :as req}]
+        make-ctx (fn [api-opts]
+                   {:cache cache
+                    :authenticated authenticated
+                    :provenance provenance
+                    :misses misses
+                    :ttl-ms ttl-ms
+                    :log log
+                    :api-opts api-opts
+                    :known-fn (known-fn cache api-opts log)
+                    :origin-opts {:cache visits :log log :ttl-ms ttl-ms}})
+        ctx (make-ctx api-opts)
+        ;; a client may bring its own token, as swh.el does
+        ctx-for (fn [token] (if token (make-ctx (assoc api-opts :token token)) ctx))]
+    (fn [{:keys [query-string] :as req}]
       (let [start (System/nanoTime)
-            ;; a client may bring its own token, as swh.el does
-            token (bearer-token headers)
             params (query-params query-string)
-            {:keys [status body]}
-            (try (when-not (local-request? headers)
-                   (fail 403 "Forbidden: not a local request"))
-                 (route (if token (ctx-for (assoc api-opts :token token)) ctx)
-                        req
-                        (or params (fail 400 "Malformed query string" {:query query-string})))
-                 (catch Exception e (error-response e)))
-            ms (quot (- (System/nanoTime) start) 1000000)]
-        (log (str (str/upper-case (name request-method)) " " uri
-                  (when-let [p (get params "path")] (str " path=" p))
-                  " -> " status " (" ms " ms)"
-                  (when (>= status 400) (str ": " (:error body)))))
+            {:keys [status body]} (handle ctx-for req params)]
+        (log-request! log req params status body
+                      (quot (- (System/nanoTime) start) 1000000))
         {:status status
          :headers {"Content-Type" "application/json"}
          :body (json/generate-string body)}))))
