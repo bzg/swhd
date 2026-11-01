@@ -73,7 +73,7 @@ Optionally set =SWHD_PORT= and =SWH_API_TOKEN=, one ~KEY=value~ per line, in
 #+begin_src shell
 systemctl --user daemon-reload
 systemctl --user enable --now swhd
-curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.7.0","authenticated":false}
+curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.9.0","authenticated":false}
 journalctl --user -u swhd -f     # logs
 #+end_src
 
@@ -91,6 +91,7 @@ The service starts at your first login.
 | =GET /visits?path=DIR=        | the origin's last visits (=n=, 10 by default)   |
 | =POST /save?path=DIR=         | "save code now" on the repo's origin          |
 | =GET /provenance?swhid=SWHID= | where the archive found it (see below)        |
+| =POST /provenance=            | the same for many SWHIDs (see below)          |
 
 =/file= takes a file or a directory. In a Git repository, a tracked file
 counts as archived when one of its parent directories is, which spares
@@ -103,6 +104,9 @@ artifact there; =null= when it knows none.  This API needs a token with
 a special permission.  A provenance found is kept for good; that there
 is none, for ten minutes.  =/tree= gives under =provenance= those it
 keeps for the artifacts it lists, without asking the archive.
+=POST /provenance= takes a JSON array of SWHIDs as its body and returns
+an object giving each core SWHID its provenance, or =null=, in one
+request to the archive per thousand SWHIDs it has to ask about.
 
 =/origin= and =/save= return under =origin= the URL they used for the
 repository: the remote's URL in the archive's form, with =.git= when

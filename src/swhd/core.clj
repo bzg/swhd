@@ -35,6 +35,9 @@
                          qualified SWHID (origin, anchor) of its
                          provenance API, null when none; needs a token
                          with the provenance permission
+  POST /provenance       the same for many: the body is a JSON array of
+                         SWHIDs, the answer an object giving each core
+                         SWHID its provenance, null when none
 
   Environment: SWHD_PORT (default 8642), SWH_API_TOKEN (a client's own
   Authorization: Bearer header takes precedence)."
@@ -54,7 +57,7 @@
 (def version
   "This daemon's version, which /ping gives: clients such as swh.el use
   it to tell an outdated daemon. Bump it with each release tag."
-  "0.7.0")
+  "0.9.0")
 
 (defn- fail
   "Throw a daemon error answered with HTTP `status`."
@@ -194,6 +197,37 @@
                 found)
             (do (swap! misses assoc s {:value true :at now})
                 nil))))))
+
+(defn- provenances!
+  "`provenance!` for all the core SWHID strings `ss`: {s found-or-nil}.
+  Only what neither the cache nor `misses` tells goes to the archive, in
+  one go; what a failure leaves behind is kept like the rest."
+  [{:keys [provenance misses ttl-ms api-opts log]} ss]
+  (let [now (System/currentTimeMillis)
+        told (into {}
+                   (keep (fn [s]
+                           (if-let [found (cache/provenance provenance s)]
+                             [s found]
+                             (when (origin/fresh (get @misses s) now ttl-ms)
+                               [s nil]))))
+                   ss)
+        ask (vec (remove #(contains? told %) (distinct ss)))
+        remember! (fn [answers]
+                    (doseq [[s found] answers]
+                      (if found
+                        (do (cache/add-provenance! provenance s found)
+                            (swap! misses dissoc s))
+                        (swap! misses assoc s {:value true :at now}))))]
+    (if (empty? ask)
+      told
+      (do
+        (log (format "provenance: asking the archive about %d SWHIDs" (count ask)))
+        (let [answers (try (api/whereare ask api-opts)
+                           (catch clojure.lang.ExceptionInfo e
+                             (remember! (:partial (meta (ex-data e))))
+                             (throw e)))]
+          (remember! answers)
+          (merge told answers))))))
 
 (defn- with-provenances
   "The `tree` of swhd.scan/scan, each node the provenance cache holds a
@@ -442,6 +476,19 @@
   (let [s (core-swhid! (get params "swhid"))]
     (respond 200 {:swhid s :provenance (provenance! ctx s)})))
 
+(defn- swhids-in
+  "The SWHID strings of the JSON array `body`, an input stream or nil; a
+  400 for anything else."
+  [body]
+  (let [swhids (try (some-> body slurp json/parse-string)
+                    (catch Exception _ nil))]
+    (when-not (and (sequential? swhids) (seq swhids) (every? string? swhids))
+      (fail 400 "The body must be a JSON array of SWHIDs"))
+    swhids))
+
+(defn- post-provenance [ctx {:keys [body]}]
+  (respond 200 (provenances! ctx (mapv core-swhid! (swhids-in body)))))
+
 (defn- post-save [{:keys [api-opts origin-opts] :as ctx} params]
   ;; save under the URL the archive already knows, if any
   (let [{:keys [origin]} (resolve-origin! ctx (path! params))]
@@ -461,13 +508,15 @@
    [:get "/origin"] get-origin
    [:get "/visits"] get-visits
    [:get "/provenance"] get-provenance
+   [:post "/provenance"] post-provenance
    [:post "/save"] post-save})
 
 (defn- route
-  "Response for `request` with its query `params`: a 404 off `routes`."
-  [ctx {:keys [request-method uri]} params]
+  "Response for `request` with its query `params`, and its body under
+  :body among them: a 404 off `routes`."
+  [ctx {:keys [request-method uri body]} params]
   (if-let [answer (routes [request-method uri])]
-    (answer ctx params)
+    (answer ctx (assoc params :body body))
     (respond 404 {:error "not found"})))
 
 (defn- handle

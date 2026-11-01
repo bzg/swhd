@@ -349,6 +349,42 @@
         (is (= 400 (first (ask (make) "swh:1:cnt:zz")))))
       (finally (delete-recursively work)))))
 
+(deftest provenances-test
+  (let [cnt "swh:1:cnt:94a9ed024d3859793618152ea559a168bbcbb5e2"
+        other "swh:1:cnt:0000000000000000000000000000000000000000"
+        found (str cnt ";origin=https://example.org/lib;anchor=swh:1:rel:"
+                   (apply str (repeat 40 "1")))
+        asked (atom [])
+        status (atom 200)
+        handler (daemon/make-handler
+                 {:cache (cache/init nil)
+                  :api-opts {:request
+                             (fn [{:keys [body]}]
+                               (let [ids (json/parse-string body)]
+                                 (swap! asked conj ids)
+                                 {:status @status :headers {}
+                                  :body (json/generate-string
+                                         (mapv #(when (= cnt %) found) ids))}))}})
+        ask (fn [body]
+              (let [resp (handler {:request-method :post :uri "/provenance"
+                                   :body (some-> body java.io.StringReader.)})]
+                [(:status resp) (json/parse-string (:body resp))]))
+        ids (fn [& ss] (json/generate-string ss))]
+    (testing "one request for all, qualifiers dropped, then the caches answer"
+      (is (= [200 {cnt found other nil}] (ask (ids (str cnt ";lines=1") other))))
+      (is (= [[cnt other]] @asked))
+      (is (= [200 {cnt found other nil}] (ask (ids cnt other))))
+      (is (= 1 (count @asked))))
+    (testing "the archive's refusal is an upstream error"
+      (reset! status 403)
+      (let [third "swh:1:cnt:1111111111111111111111111111111111111111"
+            [code body] (ask (ids third))]
+        (is (= 502 code))
+        (is (= 403 (get body "upstream-status")))))
+    (testing "anything but an array of SWHIDs is a 400"
+      (doseq [body [nil "" "{" "{}" "[]" "[1]" "[\"swh:1:cnt:zz\"]"]]
+        (is (= 400 (first (ask body))) body)))))
+
 (def ^:private snapshot "0000000000000000000000000000000000000042")
 
 (deftest qualify-test
