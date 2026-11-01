@@ -110,4 +110,8 @@
   (is (= ["swh:1:cnt:aa" "swh:1:cnt:aa;origin=x"]
          (cache/parse-provenance-line "swh:1:cnt:aa\tswh:1:cnt:aa;origin=x")))
   (is (nil? (cache/parse-provenance-line "swh:1:cnt:aa")) "no qualified SWHID")
+  (is (nil? (cache/parse-provenance-line "swh:1:cnt:aa\tswh:1:cnt:aa")) "no origin")
+  (is (nil? (cache/parse-provenance-line
+             "swh:1:cnt:aa\tswh:1:cnt:aa;anchor=swh:1:rev:bb"))
+      "qualified but no origin")
   (is (nil? (cache/parse-provenance-line "swh:1:cnt:aa\tx\ty")) "too many fields"))

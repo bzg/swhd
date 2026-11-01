@@ -57,7 +57,7 @@
 (def version
   "This daemon's version, which /ping gives: clients such as swh.el use
   it to tell an outdated daemon. Bump it with each release tag."
-  "0.9.0")
+  "0.9.1")
 
 (defn- fail
   "Throw a daemon error answered with HTTP `status`."

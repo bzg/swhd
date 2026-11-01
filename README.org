@@ -73,7 +73,7 @@ Optionally set =SWHD_PORT= and =SWH_API_TOKEN=, one ~KEY=value~ per line, in
 #+begin_src shell
 systemctl --user daemon-reload
 systemctl --user enable --now swhd
-curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.9.0","authenticated":false}
+curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.9.1","authenticated":false}
 journalctl --user -u swhd -f     # logs
 #+end_src
 
@@ -100,10 +100,11 @@ requests to the archive.
 =/provenance= returns the core =swhid= and, under =provenance=, the
 qualified SWHID the archive's provenance API gives, whose =origin= and
 =anchor= name an origin and the release or revision holding the
-artifact there; =null= when it knows none.  This API needs a token with
-a special permission.  A provenance found is kept for good; that there
-is none, for ten minutes.  =/tree= gives under =provenance= those it
-keeps for the artifacts it lists, without asking the archive.
+artifact there; =null= when it knows none (or names no origin for it).
+This API needs a token with a special permission.  A provenance found
+is kept for good; that there is none, for ten minutes.  =/tree= gives
+under =provenance= those it keeps for the artifacts it lists, without
+asking the archive.
 =POST /provenance= takes a JSON array of SWHIDs as its body and returns
 an object giving each core SWHID its provenance, or =null=, in one
 request to the archive per thousand SWHIDs it has to ask about.

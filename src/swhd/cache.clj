@@ -28,10 +28,12 @@
 
 (defn parse-provenance-line
   "The [SWHID qualified-SWHID] pair a line of the provenance file holds,
-  nil when it holds none."
+  nil when it holds none: a qualified SWHID naming no origin (older
+  daemons kept the bare SWHID the archive answers) is none."
   [line]
   (let [[s q & more] (str/split line #"\t")]
-    (when (and (swhid? s) (some? q) (str/starts-with? q "swh:1:") (nil? more))
+    (when (and (swhid? s) (some? q) (str/starts-with? q "swh:1:")
+               (str/includes? q ";origin=") (nil? more))
       [s q])))
 
 (defn- writable?
