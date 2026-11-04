@@ -9,7 +9,8 @@
   "The archive's form of a Git remote URL: https, no user, no trailing
   slash, no \".git\" suffix. ssh:// and git:// URLs and scp-like
   \"git@host:path\" become https URLs; http(s) URLs keep their scheme
-  and port. Anything else (a local path, file://) is returned as is."
+  and port. Anything else (a local path, a Windows drive's included,
+  file://) is returned as is."
   [url]
   (let [strip (fn [u]
                 (-> u
@@ -22,7 +23,7 @@
       (let [convert? (not (re-matches #"(?i)https?" scheme))]
         (strip (str (if convert? "https" (str/lower-case scheme)) "://"
                     (str/lower-case host) (when-not convert? port) path)))
-      (if-let [[_ host path] (re-matches #"(?:[^@/:]+@)?([^@/:]+):(?!//)([^:]+)" url)]
+      (if-let [[_ host path] (re-matches #"(?![a-zA-Z]:[/\\])(?:[^@/:]+@)?([^@/:]+):(?!//)([^:]+)" url)]
         (strip (str "https://" (str/lower-case host) "/" (str/replace path #"^/+" "")))
         url))))
 

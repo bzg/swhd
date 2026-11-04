@@ -12,6 +12,9 @@
     {"url": "https://bzg@gitea.example.org:3000/bzg/x.git/", "origin": "https://gitea.example.org:3000/bzg/x", "public": true},
     {"url": "http://example.org/r", "origin": "http://example.org/r", "public": true},
     {"url": "/home/me/repo", "origin": "/home/me/repo", "public": false},
+    {"url": "C:/foo/bar", "origin": "C:/foo/bar", "public": false},
+    {"url": "C:\\foo\\bar", "origin": "C:\\foo\\bar", "public": false},
+    {"url": "x:me/repo", "origin": "https://x/me/repo", "public": true},
     {"url": "file:///home/me/repo", "origin": "file:///home/me/repo", "public": false}
   ],
   "qualify": [
