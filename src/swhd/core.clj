@@ -30,6 +30,10 @@
   GET  /visits?path=DIR[&n=10]
                          the last n archival visits of the origin
   POST /save?path=DIR    save code now on the repo's origin remote
+  POST /forget           forget what may have changed in the archive:
+                         every origin's status, and that it knows no
+                         provenance for an artifact; what the archive
+                         holds is kept
   GET  /provenance?swhid=SWHID
                          where the archive found the artifact: the
                          qualified SWHID (origin, anchor) of its
@@ -57,7 +61,7 @@
 (def version
   "This daemon's version, which /ping gives: clients such as swh.el use
   it to tell an outdated daemon. Bump it with each release tag."
-  "0.9.1")
+  "0.10.0")
 
 (defn- fail
   "Throw a daemon error answered with HTTP `status`."
@@ -499,6 +503,13 @@
       (origin/forget! (:cache origin-opts) origin)
       (respond 200 (assoc saved :origin origin)))))
 
+(defn- post-forget [{:keys [misses] {visits :cache} :origin-opts} _params]
+  ;; what the archive holds stays so: the SWHIDs it holds (:cache) and
+  ;; the provenances found (:provenance) are kept
+  (reset! visits {})
+  (reset! misses {})
+  (respond 200 {:forgotten true}))
+
 (def ^:private routes
   "[method uri] -> the route answering it, see the namespace's doc."
   {[:get "/ping"] get-ping
@@ -509,7 +520,8 @@
    [:get "/visits"] get-visits
    [:get "/provenance"] get-provenance
    [:post "/provenance"] post-provenance
-   [:post "/save"] post-save})
+   [:post "/save"] post-save
+   [:post "/forget"] post-forget})
 
 (defn- route
   "Response for `request` with its query `params`, and its body under
@@ -549,9 +561,9 @@
   status, duration, error) and per call to the archive. What the
   archive says about an origin is remembered for `origin-ttl-ms`
   (swhd.origin/default-ttl-ms) and forgotten by a save request; that
-  it knows no provenance for an artifact, as long. The provenances it
-  finds go to `provenance` (swhd.cache/init-provenance), in memory by
-  default."
+  it knows no provenance for an artifact, as long. POST /forget
+  forgets both. The provenances it finds go to `provenance`
+  (swhd.cache/init-provenance), in memory by default."
   [{:keys [cache provenance api-opts log origin-ttl-ms]}]
   (let [log (or log (fn [_]))
         ttl-ms (or origin-ttl-ms origin/default-ttl-ms)

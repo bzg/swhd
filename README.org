@@ -73,7 +73,7 @@ Optionally set =SWHD_PORT= and =SWH_API_TOKEN=, one ~KEY=value~ per line, in
 #+begin_src shell
 systemctl --user daemon-reload
 systemctl --user enable --now swhd
-curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.9.1","authenticated":false}
+curl http://127.0.0.1:8642/ping  # {"pong":true,"version":"0.10.0","authenticated":false}
 journalctl --user -u swhd -f     # logs
 #+end_src
 
@@ -90,6 +90,7 @@ The service starts at your first login.
 | =GET /origin?path=DIR=        | archival status and date of the repo's origin |
 | =GET /visits?path=DIR=        | the origin's last visits (=n=, 10 by default)   |
 | =POST /save?path=DIR=         | "save code now" on the repo's origin          |
+| =POST /forget=                | forget what may have changed (see below)      |
 | =GET /provenance?swhid=SWHID= | where the archive found it (see below)        |
 | =POST /provenance=            | the same for many SWHIDs (see below)          |
 
@@ -108,6 +109,11 @@ asking the archive.
 =POST /provenance= takes a JSON array of SWHIDs as its body and returns
 an object giving each core SWHID its provenance, or =null=, in one
 request to the archive per thousand SWHIDs it has to ask about.
+
+=POST /forget= forgets what swhd remembers of what may have changed in
+the archive: the status of every origin, kept ten minutes otherwise
+(a save request forgets only its own), and that it knows no provenance
+for an artifact.  What the archive holds is kept: it stays so.
 
 =/origin= and =/save= return under =origin= the URL they used for the
 repository: the remote's URL in the archive's form, with =.git= when

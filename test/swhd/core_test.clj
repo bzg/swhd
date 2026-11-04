@@ -91,6 +91,13 @@
             (is (true? (:archived body)))
             (is (= file-swhid (:swhid body))))
           (is (cache/known? (cache/init cache-file) file-swhid)))
+        (testing "/forget keeps what the archive holds: it is not asked again"
+          (let [handler (daemon/make-handler
+                         {:cache (cache/init cache-file)
+                          :api-opts {:request (fn [_] (throw (ex-info "asked" {})))}})]
+            (get-json handler :post "/forget")
+            (is (true? (:archived (second (get-json handler :get "/file"
+                                                    (str (io/file project "a.txt")))))))))
         (testing "unknown route"
           (is (= 404 (first (get-json handler :get "/nope"))))))
       (testing "/save uses the origin remote, in the archive's form"
@@ -284,15 +291,19 @@
             (get-json handler :post "/save" (str repo))
             (is (= 1 @visits))
             (get-json handler :get "/origin" (str repo))
-            (is (= 2 @visits)))))
+            (is (= 2 @visits)))
+          (testing "so does a forget request"
+            (is (= [200 {:forgotten true}] (get-json handler :post "/forget")))
+            (get-json handler :get "/origin" (str repo))
+            (is (= 3 @visits)))))
       (testing "the answer expires"
         (let [handler (make 0)]
           (get-json handler :get "/origin" (str repo))
           (get-json handler :get "/origin" (str repo))
-          (is (= 4 @visits))))
+          (is (= 5 @visits))))
       (testing "each handler has its own cache"
         (get-json (make) :get "/origin" (str repo))
-        (is (= 5 @visits)))
+        (is (= 6 @visits)))
       (finally (delete-recursively work)))))
 
 (deftest provenance-test
@@ -334,11 +345,16 @@
         (let [handler (make)]
           (is (= [200 {:swhid other :provenance nil}] (ask handler other)))
           (ask handler other)
-          (is (= 2 @calls)))
+          (is (= 2 @calls))
+          (testing "until a forget request, which keeps what is found"
+            (get-json handler :post "/forget")
+            (ask handler other)
+            (ask handler cnt)
+            (is (= 3 @calls))))
         (let [handler (make 0)]
           (ask handler other)
           (ask handler other)
-          (is (= 4 @calls))))
+          (is (= 5 @calls))))
       (testing "the archive's refusal is an upstream error"
         (reset! status 403)
         (let [[code body] (ask (make) other)]
